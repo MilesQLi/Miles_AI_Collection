@@ -50,6 +50,13 @@ If you prefer to run applications directly:
 
 Contributions are welcome! If you have ideas for new AI applications or improvements to existing ones, please feel free to submit a Pull Request.
 
+## Disclaimer
+
+This software is provided "as is", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose and noninfringement. In no event shall the authors or copyright holders be liable for any claim, damages or other liability, whether in an action of contract, tort or otherwise, arising from, out of or in connection with the software or the use or other dealings in the software.
+
+Users are responsible for checking and validating the correctness of their configuration files, safetensor files, and binary files generated using the software. The developers assume no responsibility for any errors, omissions, or other issues coming in these files, or any consequences resulting from the use of these files.
+
+
 ## License
 
 Apache 2.0
