@@ -31,20 +31,6 @@ A web-based Linux terminal console powered by LangChain and LLMs that helps user
 
 A flexible framework for distributed pretraining of language models using Lightning Fabric with FSDP (Fully Sharded Data Parallel) strategy. This application allows you to pretrain any Hugging Face model on any dataset with a simple YAML configuration. It supports multi-GPU and multi-node training with optimized performance for modern NVIDIA GPUs with Tensor Cores.
 
-Key features:
-- YAML-based configuration for easy customization
-- Support for any Hugging Face model and dataset
-- Distributed training with FSDP strategy
-- Automatic optimization for Tensor Cores
-- TensorBoard logging for monitoring training progress
-
-To use this application:
-```bash
-cd LightningFabricDistributedPretraining
-python train.py --config config.yaml
-```
-
-For more details, see the [Lightning Fabric Distributed Pretraining README](LightningFabricDistributedPretraining/README.md).
 
 ## Coming Soon
 

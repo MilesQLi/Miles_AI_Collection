@@ -156,19 +156,18 @@ def main():
     fabric.print(f"Using Strategy: {type(fabric.strategy).__name__}")
     fabric.print(f"Using Precision: {fabric._precision}")
 
+    # Load tokenizer
     fabric.print(f"Loading tokenizer: {config['model']['name_or_path']}")
-    # Load tokenizer once, it's typically small and doesn't need distribution
     tokenizer = AutoTokenizer.from_pretrained(config['model']['name_or_path'])
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         fabric.print("Added EOS token as PAD token.")
 
-    # --- FSDP Aware Model Initialization ---
-    # Use init_module for potentially large models with FSDP to avoid OOM on rank 0
-    # empty_init=True can save memory by initializing on meta device first
-    # Let Fabric decide based on strategy whether empty_init is beneficial
+    # --- Model Initialization ---
+    fabric.print(f"Loading model: {config['model']['name_or_path']}")
+    #When training distributed models with FSDP/TP or DeepSpeed, using init_module() is necessary in most cases because 
+    # otherwise model initialization gets very slow (minutes) or (and that’s more likely) you run out of CPU memory due to the size of the model.
     with fabric.init_module():
-        fabric.print(f"Loading model: {config['model']['name_or_path']} within fabric.init_module()")
         model = AutoModelForCausalLM.from_pretrained(config['model']['name_or_path'])
         model.config.pad_token_id = tokenizer.pad_token_id # Set pad token id
         # Optional: Apply activation checkpointing here if needed for very large models
@@ -180,9 +179,8 @@ def main():
         #     # Or apply it manually if Fabric doesn't expose easy wrapping policy config yet
         #     print("Note: Activation Checkpointing / Auto Wrapping Policy not explicitly applied in this example.")
 
-
+    # Load and tokenize dataset
     fabric.print("Loading and tokenizing dataset...")
-    # Load the full dataset on each rank - Fabric will handle distribution
     train_data_list = custom_load_dataset(tokenizer, config)
     
     if not train_data_list:
@@ -204,12 +202,6 @@ def main():
         num_workers=min(4, os.cpu_count() // fabric.world_size if fabric.world_size > 0 else 1),
         pin_memory=True
     )
-
-    # Setup model with Fabric
-    fabric.print("Setting up model with Fabric...")
-    with fabric.init_module():
-        model = AutoModelForCausalLM.from_pretrained(config['model']['name_or_path'])
-        model.config.pad_token_id = tokenizer.pad_token_id
 
     # Setup optimizer and scheduler
     fabric.print("Setting up optimizer and scheduler...")
@@ -301,7 +293,7 @@ def main():
 
     fabric.print("Training finished.")
 
-    # Save the final model
+    # Save the final model and tokenizer
     fabric.print(f"Saving final model checkpoint to {config['output']['dir']}")
     save_path = os.path.join(config['output']['dir'], f"final_model_epoch_{config['training']['epochs']}.pt")
     
