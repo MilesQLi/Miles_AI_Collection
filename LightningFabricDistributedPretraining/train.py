@@ -42,7 +42,7 @@ def ensure_numeric_types(config):
             return config
     return config
 
-def load_dataset(tokenizer, config):
+def custom_load_dataset(tokenizer, config):
     """Loads and tokenizes a dataset."""
     dataset_config = config['dataset']
     seq_len = dataset_config['seq_len']
@@ -183,7 +183,7 @@ def main():
 
     fabric.print("Loading and tokenizing dataset...")
     # Load the full dataset on each rank - Fabric will handle distribution
-    train_data_list = load_dataset(tokenizer, config)
+    train_data_list = custom_load_dataset(tokenizer, config)
     
     if not train_data_list:
         fabric.print("Dataset is empty or failed to load. Exiting.")
