@@ -1,51 +1,37 @@
-# Miles' Open Source AI Application Collection
+# AI Text Completion App
 
-A curated collection of open-source applications powered by foundation models, designed to demonstrate practical applications of AI in everyday tools.
+A desktop application that provides real-time AI-powered text completion suggestions as you type, supporting both OpenAI and Ollama language models.
 
-## Quick Start
+![AI Text Completion App Screenshot](screenshot.png)
 
-You can launch any application in the collection using our convenient launcher:
+## Features
 
-- **Windows**: Double click `launcher.bat`
-- **Linux/Mac**: Run `./launcher.sh`
-
-![Application Launcher](launcher.png)
-
-Simply select an application from the list and click "Launch Application" to start using it.
-
-## Applications
-
-### 1. AI Text Completion App (auto_completion_app/)
-
-A desktop application that provides real-time AI-powered text completion suggestions as you type, supporting both OpenAI and Ollama language models. The app features a clean, intuitive interface with customizable settings for different AI models and completion behaviors. Perfect for writers, developers, or anyone looking to enhance their typing efficiency with AI assistance.
-
-![AI Text Completion App Screenshot](./auto_completion_app/screenshot.png)
-
-## Coming Soon
-
-More AI-powered applications are in development and will be added to this collection. Stay tuned for applications in areas such as:
-- Image Generation
-- Code Assistance
-- Document Analysis
-- Audio Processing
-- And more!
+- Real-time AI text completion suggestions
+- Support for both OpenAI and Ollama APIs
+- Customizable completion delay and token length
+- Easy completion acceptance with Tab key
+- File operations (New, Open, Save, Save As)
+- Configurable settings
+- Dark text completion preview
+- Status bar with completion state indicators
 
 ## Requirements
 
 - Python 3.x
 - tkinter (usually comes with Python)
-- Additional requirements specific to each application
+- requests library (`pip install requests`)
 
+## Installation
 
-## Launch
-
-Launch the application collection:
-- Windows: Double click `launcher.bat`
-- Linux/Mac: 
-  ```bash
-  chmod +x launcher.sh
-  ./launcher.sh
-  ```
+1. Clone this repository or download the source code
+2. Install the required dependencies:
+   ```bash
+   pip install requests
+   ```
+3. Run the application:
+   ```bash
+   python main.py
+   ```
 
 ## Configuration
 
@@ -94,10 +80,17 @@ Settings are automatically saved to `~/.aicompletion.json`
 - Auto-completion can be toggled on/off using the checkbox in the status bar
 - Completion suggestions appear in gray text and can be accepted or ignored
 
+## Disclaimer
+
+This software is provided "as is", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose and noninfringement. In no event shall the authors or copyright holders be liable for any claim, damages or other liability, whether in an action of contract, tort or otherwise, arising from, out of or in connection with the software or the use or other dealings in the software.
+
+Users are responsible for checking and validating the correctness of their configuration files, safetensor files, and binary files generated using the software. The developers assume no responsibility for any errors, omissions, or other issues coming in these files, or any consequences resulting from the use of these files.
+
+
 ## License
 
 Apache 2.0
 
 ## Contributing
 
-Contributions are welcome! If you have ideas for new AI applications or improvements to existing ones, please feel free to submit a Pull Request.
+Contributions are welcome! Please feel free to submit a Pull Request.

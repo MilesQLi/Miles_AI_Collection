@@ -81,6 +81,10 @@ class AppLauncher:
             "auto_completion_app": {
                 "name": "AI Text Completion App",
                 "description": "A desktop application that provides real-time AI-powered text completion suggestions as you type, supporting both OpenAI and Ollama language models."
+            },
+            "Linux_intelligent_web_console": {
+                "name": "Intelligent Linux Web Console",
+                "description": "A web-based Linux terminal console powered by LangChain and LLMs that helps users execute commands through natural language understanding. Use 'ask' followed by your request in quotes to get AI assistance with commands."
             }
             # Add more apps here as they are developed
         }

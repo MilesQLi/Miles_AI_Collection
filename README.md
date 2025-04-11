@@ -21,6 +21,31 @@ A desktop application that provides real-time AI-powered text completion suggest
 
 ![AI Text Completion App Screenshot](auto_completion_app/screenshot.png)
 
+### 2. Intelligent Linux Web Console (Linux_intelligent_web_console/)
+
+A web-based Linux terminal console powered by LangChain and LLMs that helps users execute commands through natural language understanding. The console combines traditional terminal functionality with AI assistance to make command-line operations more accessible.
+
+![Intelligent Linux Web Console Screenshot](Linux_intelligent_web_console/screenshot.png)
+
+### 3. Lightning Fabric Distributed Pretraining (LightningFabricDistributedPretraining/)
+
+A flexible framework for distributed pretraining of language models using Lightning Fabric with FSDP (Fully Sharded Data Parallel) strategy. This application allows you to pretrain any Hugging Face model on any dataset with a simple YAML configuration. It supports multi-GPU and multi-node training with optimized performance for modern NVIDIA GPUs with Tensor Cores.
+
+Key features:
+- YAML-based configuration for easy customization
+- Support for any Hugging Face model and dataset
+- Distributed training with FSDP strategy
+- Automatic optimization for Tensor Cores
+- TensorBoard logging for monitoring training progress
+
+To use this application:
+```bash
+cd LightningFabricDistributedPretraining
+python train.py --config config.yaml
+```
+
+For more details, see the [Lightning Fabric Distributed Pretraining README](LightningFabricDistributedPretraining/README.md).
+
 ## Coming Soon
 
 More AI-powered applications are in development and will be added to this collection. Stay tuned for applications in areas such as:
@@ -55,7 +80,6 @@ Contributions are welcome! If you have ideas for new AI applications or improvem
 This software is provided "as is", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose and noninfringement. In no event shall the authors or copyright holders be liable for any claim, damages or other liability, whether in an action of contract, tort or otherwise, arising from, out of or in connection with the software or the use or other dealings in the software.
 
 Users are responsible for checking and validating the correctness of their configuration files, safetensor files, and binary files generated using the software. The developers assume no responsibility for any errors, omissions, or other issues coming in these files, or any consequences resulting from the use of these files.
-
 
 ## License
 

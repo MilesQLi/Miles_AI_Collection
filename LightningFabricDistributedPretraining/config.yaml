@@ -1,0 +1,35 @@
+# Model Configuration
+model:
+  name_or_path: gpt2
+  pad_token_id: null  # Will be set to eos_token_id if None
+
+# Dataset Configuration
+dataset:
+  name: nthngdy/oscar-mini
+  subset: unshuffled_deduplicated_en
+  split: train
+  max_samples: 2000
+  seq_len: 128
+  trust_remote_code: true
+
+# Training Configuration
+training:
+  epochs: 1
+  seed: 42
+  batch_size_per_device: 4
+  grad_accum_steps: 4
+  learning_rate: 5.0e-5
+  warmup_steps: 100
+  log_interval: 10
+
+# Output Configuration
+output:
+  dir: ./fabric_fsdp_gpt2_output
+
+# Lightning Fabric Configuration
+fabric:
+  accelerator: auto
+  strategy: fsdp
+  devices: auto
+  precision: bf16-mixed
+  num_nodes: 1 
