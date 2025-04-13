@@ -2,7 +2,7 @@ import torch
 import argparse
 import os
 import yaml
-from transformers import AutoModelForCausalLM, AutoTokenizer, get_linear_schedule_with_warmup
+from transformers import AutoModelForCausalLM, AutoTokenizer, get_linear_schedule_with_warmup,AutoConfig
 from datasets import load_dataset
 from torch.utils.data import Dataset, DataLoader
 import torch.optim as optim
@@ -167,17 +167,13 @@ def main():
     fabric.print(f"Loading model: {config['model']['name_or_path']}")
     #When training distributed models with FSDP/TP or DeepSpeed, using init_module() is necessary in most cases because 
     # otherwise model initialization gets very slow (minutes) or (and that’s more likely) you run out of CPU memory due to the size of the model.
-    with fabric.init_module():
-        model = AutoModelForCausalLM.from_pretrained(config['model']['name_or_path'])
-        model.config.pad_token_id = tokenizer.pad_token_id # Set pad token id
-        # Optional: Apply activation checkpointing here if needed for very large models
-        # if fabric.strategy.name == "fsdp":
-        #     from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
-        #     from transformers.models.gpt2.modeling_gpt2 import GPT2Block
-        #     auto_wrap_policy = partial(transformer_auto_wrap_policy, transformer_layer_cls={GPT2Block})
-        #     # You might need to pass this policy to the FSDPStrategy instance in Fabric initialization
-        #     # Or apply it manually if Fabric doesn't expose easy wrapping policy config yet
-        #     print("Note: Activation Checkpointing / Auto Wrapping Policy not explicitly applied in this example.")
+    # TODO how to avoid loading full parameter to each rank before sharding
+    with fabric.init_module():#empty_init=True):
+        #model_config = AutoConfig.from_pretrained(config['model']['name_or_path'])
+        #model = AutoModelForCausalLM.from_config(model_config)
+        #model.config.pad_token_id = tokenizer.pad_token_id # Set pad token id
+        model = AutoModelForCausalLM.from_pretrained(config['model']['name_or_path'],low_cpu_mem_usage=True)
+    
 
     # Load and tokenize dataset
     fabric.print("Loading and tokenizing dataset...")
@@ -205,7 +201,6 @@ def main():
 
     # Setup optimizer and scheduler
     fabric.print("Setting up optimizer and scheduler...")
-    optimizer = optim.AdamW(model.parameters(), lr=config['training']['learning_rate'])
     
     # Calculate total training steps
     estimated_steps_per_epoch = len(train_dataset) // (config['training']['batch_size_per_device'] * fabric.world_size)
@@ -215,15 +210,23 @@ def main():
         fabric.print("Warning: Calculated total training steps is zero or negative. Using warmup steps as total.")
         total_training_steps = config['training']['warmup_steps'] * 2
 
+
+    # Setup model, optimizer, and dataloaders with Fabric
+    fabric.print("Setting up model, optimizer, and dataloaders with Fabric...")
+    model = fabric.setup(model)
+    
+    optimizer = optim.AdamW(model.parameters(), lr=config['training']['learning_rate'])
+    optimizer = fabric.setup_optimizers(optimizer)
+
+    #fabric.load_raw(config['model']['name_or_path'],model)
+
     lr_scheduler = get_linear_schedule_with_warmup(
         optimizer=optimizer,
         num_warmup_steps=min(config['training']['warmup_steps'], total_training_steps),
         num_training_steps=total_training_steps
     )
 
-    # Setup model, optimizer, and dataloaders with Fabric
-    fabric.print("Setting up model, optimizer, and dataloaders with Fabric...")
-    model, optimizer = fabric.setup(model, optimizer)
+
     train_dataloader = fabric.setup_dataloaders(train_dataloader)
     
     # Calculate steps per epoch

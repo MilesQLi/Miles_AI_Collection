@@ -31,6 +31,9 @@ A web-based Linux terminal console powered by LangChain and LLMs that helps user
 
 A flexible framework for distributed pretraining of language models using Lightning Fabric with FSDP (Fully Sharded Data Parallel) strategy. This application allows you to pretrain any Hugging Face model on any dataset with a simple YAML configuration. It supports multi-GPU and multi-node training with optimized performance for modern NVIDIA GPUs with Tensor Cores.
 
+### 4. HuggingFace SFT Training Script (HuggingFace_SFT/)
+
+A powerful script for conducting distributed fine-tuning of language models using Supervised Fine-Tuning (SFT) with configurable parameters loaded from a YAML file.  It properly sets up the training mechanics so as no to train on input part. It is a perfect template for researchers and developers looking to fine-tune language models on their specific datasets with minimal setup.
 
 ## Coming Soon
 

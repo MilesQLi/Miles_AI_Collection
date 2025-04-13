@@ -1,0 +1,27 @@
+# Model Configuration
+model:
+  path: '/workspace/text-generation-webui/models/Qwen_Qwen2.5-0.5B-Instruct'
+  max_seq_length: 128
+  dtype: null
+  load_in_4bit: false
+
+# Dataset Configuration
+dataset:
+  name: openai/gsm8k
+  subset: main
+  split: train
+
+# Training Configuration
+training:
+  gradient_accumulation_steps: 1
+  per_device_train_batch_size: 1
+  warmup_steps: 5
+  max_steps: 200
+  learning_rate: 2.0e-4
+  fp16: auto
+  logging_steps: 1
+  weight_decay: 0.01
+  lr_scheduler_type: linear
+  seed: 3407
+  output_dir: outputs
+  report_to: none 
