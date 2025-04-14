@@ -1,5 +1,5 @@
 fastapi==0.103.1
 uvicorn==0.23.2
 websockets==11.0.3
-langchain==0.0.267
-langchain-openai==0.0.2.post1
+langchain>=0.2.5
+langchain-openai
