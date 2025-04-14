@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Linux Terminal with AI Assistant</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background-color: #2b2b2b;
+            color: #f0f0f0;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        
+        #terminal-container {
+            flex: 1;
+            padding: 10px;
+            overflow-y: auto;
+            background-color: #1e1e1e;
+            border-radius: 4px;
+            margin: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+        }
+        
+        #terminal-output {
+            white-space: pre-wrap;
+            margin-bottom: 10px;
+            user-select: text;
+            -webkit-user-select: text;
+            -moz-user-select: text;
+            -ms-user-select: text;
+        }
+        
+        #input-container {
+            display: flex;
+            padding: 10px;
+            background-color: #2b2b2b;
+            border-top: 1px solid #444;
+        }
+        
+        #prompt {
+            color: #4caf50;
+            margin-right: 5px;
+        }
+        
+        #terminal-input {
+            flex: 1;
+            background-color: transparent;
+            border: none;
+            color: #f0f0f0;
+            font-family: 'Courier New', monospace;
+            font-size: 1em;
+            outline: none;
+        }
+        
+        .command {
+            color: #4caf50;
+        }
+        
+        .output {
+            color: #f0f0f0;
+        }
+        
+        .error {
+            color: #ff5252;
+        }
+        
+        .ai-response {
+            color: #64b5f6;
+            border-left: 2px solid #64b5f6;
+            padding-left: 10px;
+            margin: 10px 0;
+        }
+        
+        .ai-processing {
+            color: #a6a6a6;
+            font-style: italic;
+        }
+        
+        .confirm-prompt {
+            color: #ffb74d;
+            margin-top: 10px;
+        }
+        
+        .header {
+            background-color: #333;
+            padding: 10px;
+            text-align: center;
+            border-bottom: 1px solid #444;
+        }
+        
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            background-color: #333;
+            padding: 5px 10px;
+            border-top: 1px solid #444;
+            font-size: 0.8em;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h2>Linux Web Terminal with AI Command Assistant</h2>
+        <p>Type normal Linux commands or use <span class="command">ask "your question here"</span> for AI assistance</p>
+    </div>
+    
+    <div id="terminal-container">
+        <div id="terminal-output"></div>
+    </div>
+    
+    <div id="input-container">
+        <span id="prompt">user@webterminal:~$</span>
+        <input type="text" id="terminal-input" autofocus>
+    </div>
+    
+    <div class="status-bar">
+        <span id="status">Connected</span>
+        <span id="model-info">AI: qwen2.5:14b-instruct-q6_K</span>
+    </div>
+
+    <script>
+        const terminalOutput = document.getElementById('terminal-output');
+        const terminalInput = document.getElementById('terminal-input');
+        const statusElement = document.getElementById('status');
+        const terminalContainer = document.getElementById('terminal-container');
+        const promptElement = document.getElementById('prompt');
+        
+        let commandHistory = [];
+        let historyIndex = -1;
+        let waitingForConfirmation = false;
+        let commandToExecute = '';
+        let currentDirectory = '~';
+        
+        // Connect to WebSocket
+        const ws = new WebSocket(`ws://${window.location.host}/ws/terminal`);
+        
+        ws.onopen = function(event) {
+            statusElement.textContent = 'Connected';
+            appendToTerminal('Connecting to server...', 'output');
+        };
+        
+        ws.onclose = function(event) {
+            statusElement.textContent = 'Disconnected';
+            appendToTerminal('Connection closed. Please refresh the page to reconnect.', 'error');
+        };
+        
+        ws.onerror = function(event) {
+            statusElement.textContent = 'Error';
+            appendToTerminal('WebSocket error.', 'error');
+        };
+        
+        ws.onmessage = function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                
+                // Update current directory if provided
+                if (data.current_dir) {
+                    currentDirectory = data.current_dir;
+                    updatePrompt();
+                }
+                
+                if (data.status === 'confirm') {
+                    waitingForConfirmation = true;
+                    commandToExecute = data.command;
+                    appendToTerminal(data.output, 'confirm-prompt');
+                } else {
+                    if (data.type === 'output') {
+                        appendToTerminal(data.output, 'output');
+                    } else if (data.type === 'error') {
+                        appendToTerminal(data.output, 'error');
+                    } else if (data.type === 'ai_response') {
+                        appendToTerminal(data.output, 'ai-response');
+                        if (data.command) {
+                            appendToTerminal(`Suggested command: ${data.command}`, 'command');
+                        }
+                    } else if (data.type === 'ai_processing') {
+                        appendToTerminal(data.output, 'ai-processing');
+                    }
+                    
+                    waitingForConfirmation = false;
+                }
+            } catch (e) {
+                appendToTerminal('Error parsing server response.', 'error');
+            }
+        };
+        
+        function updatePrompt() {
+            // Format the directory for display
+            let displayDir = currentDirectory;
+            
+            // Replace home directory with ~ if it's at the beginning
+            // Try different common home directory patterns
+            const homePatterns = [
+                '/home/user',
+                '/home/ubuntu',
+                '/root',
+                '/Users'
+            ];
+            
+            for (const homeDir of homePatterns) {
+                if (currentDirectory.startsWith(homeDir)) {
+                    displayDir = '~' + currentDirectory.substring(homeDir.length);
+                    break;
+                }
+            }
+            
+            // If the path is just the home directory, show ~
+            if (currentDirectory === '/home/user' || 
+                currentDirectory === '/home/ubuntu' || 
+                currentDirectory === '/root' ||
+                currentDirectory === '/Users') {
+                displayDir = '~';
+            }
+            
+            // Update the prompt element
+            promptElement.textContent = `user@webterminal:${displayDir}$`;
+        }
+        
+        function appendToTerminal(text, className) {
+            const element = document.createElement('div');
+            element.className = className || '';
+            element.textContent = text;
+            terminalOutput.appendChild(element);
+            terminalContainer.scrollTop = terminalContainer.scrollHeight;
+        }
+        
+        function sendCommand(command) {
+            appendToTerminal(`${promptElement.textContent} ${command}`, 'command');
+            
+            if (waitingForConfirmation) {
+                const confirmData = {
+                    type: 'confirmation',
+                    confirm: command,
+                    command: commandToExecute
+                };
+                ws.send(JSON.stringify(confirmData));
+                waitingForConfirmation = false;
+                return;
+            }
+            
+            const data = {
+                command: command
+            };
+            
+            try {
+                ws.send(JSON.stringify(data));
+            } catch (e) {
+                appendToTerminal('Error sending command: ' + e.message, 'error');
+            }
+        }
+        
+        terminalInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                const command = terminalInput.value.trim();
+                if (command) {
+                    commandHistory.unshift(command);
+                    historyIndex = -1;
+                    terminalInput.value = '';
+                    sendCommand(command);
+                }
+            } 
+            else if (e.key === 'ArrowUp') {
+                if (historyIndex < commandHistory.length - 1) {
+                    historyIndex++;
+                    terminalInput.value = commandHistory[historyIndex];
+                }
+                e.preventDefault();
+            } 
+            else if (e.key === 'ArrowDown') {
+                if (historyIndex > 0) {
+                    historyIndex--;
+                    terminalInput.value = commandHistory[historyIndex];
+                } else if (historyIndex === 0) {
+                    historyIndex = -1;
+                    terminalInput.value = '';
+                }
+                e.preventDefault();
+            }
+        });
+        
+        // Focus on input when clicking anywhere in the terminal
+        terminalContainer.addEventListener('click', () => {
+            terminalInput.focus();
+        });
+    </script>
+</body>
+</html>
