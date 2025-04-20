@@ -85,6 +85,10 @@ class AppLauncher:
             "Linux_intelligent_web_console": {
                 "name": "Intelligent Linux Web Console",
                 "description": "A web-based Linux terminal console powered by LangChain and LLMs that helps users execute commands through natural language understanding. Use 'ask' followed by your request in quotes to get AI assistance with commands."
+            },
+            "Intelligent_Test_System": {
+                "name": "Intelligent Test System",
+                "description": "A modern, AI-powered test-taking application that provides intelligent feedback and evaluation for user responses. Built with Python and Tkinter, it uses a local LLM to evaluate answers based on meaning and concepts."
             }
             # Add more apps here as they are developed
         }
