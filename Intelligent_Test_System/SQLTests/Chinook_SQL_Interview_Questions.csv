@@ -1,0 +1,86 @@
+Question,Answer
+1. Retrieve the names and emails of all customers from the United States.,"SELECT FirstName, LastName, Email FROM Customer WHERE Country = 'USA';"
+2. Count how many tracks there are for each genre.,"SELECT GenreId, COUNT(*) AS TrackCount FROM Track GROUP BY GenreId;"
+3. Find the total sales per customer.,"SELECT CustomerId, SUM(Total) AS TotalSpent FROM Invoice GROUP BY CustomerId;"
+4. List all albums that have more than 10 tracks.,SELECT AlbumId FROM Track GROUP BY AlbumId HAVING COUNT(*) > 10;
+5. Find the most expensive track.,"SELECT Name, UnitPrice FROM Track ORDER BY UnitPrice DESC LIMIT 1;"
+6. Retrieve tracks with names starting with 'A'.,SELECT Name FROM Track WHERE Name LIKE 'A%';
+7. Show invoices with a billing country different from the customer’s country.,"
+SELECT Invoice.InvoiceId, Customer.Country AS CustomerCountry, Invoice.BillingCountry
+FROM Invoice
+JOIN Customer ON Invoice.CustomerId = Customer.CustomerId
+WHERE Customer.Country <> Invoice.BillingCountry;
+"
+8. List employees who do not have a manager.,SELECT * FROM Employee WHERE ReportsTo IS NULL;
+9. Retrieve the names of artists who have more than 1 album.,"
+SELECT ArtistId FROM Album GROUP BY ArtistId HAVING COUNT(*) > 1;
+"
+10. Get the total duration of all tracks in seconds.,SELECT SUM(Milliseconds) / 1000 AS TotalSeconds FROM Track;
+11. List customers who have not made any purchases.,"
+SELECT * FROM Customer WHERE CustomerId NOT IN (SELECT DISTINCT CustomerId FROM Invoice);
+"
+12. Retrieve tracks along with their genre and album titles.,"
+SELECT Track.Name, Genre.Name AS Genre, Album.Title AS Album
+FROM Track
+JOIN Genre ON Track.GenreId = Genre.GenreId
+JOIN Album ON Track.AlbumId = Album.AlbumId;
+"
+13. Find the average invoice total per country.,"SELECT BillingCountry, AVG(Total) AS AvgTotal FROM Invoice GROUP BY BillingCountry;"
+14. Count the number of customers per support representative.,"SELECT SupportRepId, COUNT(*) AS NumCustomers FROM Customer GROUP BY SupportRepId;"
+15. List the top 5 selling tracks.,"
+SELECT TrackId, COUNT(*) AS TimesSold
+FROM InvoiceLine
+GROUP BY TrackId
+ORDER BY TimesSold DESC
+LIMIT 5;
+"
+16. Retrieve all employees with their manager names.,"
+SELECT e.FirstName || ' ' || e.LastName AS Employee,
+       m.FirstName || ' ' || m.LastName AS Manager
+FROM Employee e
+LEFT JOIN Employee m ON e.ReportsTo = m.EmployeeId;
+"
+17. Show all customers with invoices over $20.,"
+SELECT DISTINCT CustomerId FROM Invoice WHERE Total > 20;
+"
+18. List all countries with more than 5 customers.,"SELECT Country, COUNT(*) FROM Customer GROUP BY Country HAVING COUNT(*) > 5;"
+19. Find the invoice with the highest total.,SELECT * FROM Invoice ORDER BY Total DESC LIMIT 1;
+20. Show the total sales for each employee.,"
+SELECT e.EmployeeId, e.FirstName || ' ' || e.LastName AS Employee, SUM(i.Total) AS TotalSales
+FROM Employee e
+JOIN Customer c ON e.EmployeeId = c.SupportRepId
+JOIN Invoice i ON c.CustomerId = i.CustomerId
+GROUP BY e.EmployeeId;
+"
+21. Retrieve all tracks longer than 5 minutes.,SELECT Name FROM Track WHERE Milliseconds > 300000;
+22. Show invoices that include more than 3 different tracks.,"
+SELECT InvoiceId FROM InvoiceLine GROUP BY InvoiceId HAVING COUNT(DISTINCT TrackId) > 3;
+"
+23. Find albums with no tracks.,"
+SELECT AlbumId FROM Album WHERE AlbumId NOT IN (SELECT DISTINCT AlbumId FROM Track);
+"
+24. List customers whose last name starts with 'S'.,SELECT * FROM Customer WHERE LastName LIKE 'S%';
+25. Get the number of invoices each month.,"
+SELECT strftime('%Y-%m', InvoiceDate) AS Month, COUNT(*) AS InvoiceCount
+FROM Invoice
+GROUP BY Month;
+"
+26. Show track names and their media types.,"
+SELECT Track.Name, MediaType.Name AS MediaType
+FROM Track
+JOIN MediaType ON Track.MediaTypeId = MediaType.MediaTypeId;
+"
+27. Retrieve the top 3 customers by total purchases.,"
+SELECT CustomerId, SUM(Total) AS TotalSpent
+FROM Invoice
+GROUP BY CustomerId
+ORDER BY TotalSpent DESC
+LIMIT 3;
+"
+28. List all artists whose name contains 'The'.,SELECT * FROM Artist WHERE Name LIKE '%The%';
+29. Retrieve employees hired after the year 2000.,SELECT * FROM Employee WHERE HireDate > '2000-01-01';
+30. Find the difference in total sales between two countries.,"
+SELECT 
+  (SELECT SUM(Total) FROM Invoice WHERE BillingCountry = 'USA') - 
+  (SELECT SUM(Total) FROM Invoice WHERE BillingCountry = 'Canada') AS SalesDifference;
+"

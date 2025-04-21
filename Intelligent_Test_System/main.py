@@ -53,6 +53,19 @@ class TestSystem:
         self.dataset_label = tk.Label(top_frame, text="No dataset loaded")
         self.dataset_label.pack(side=tk.LEFT, padx=5)
         
+        # Question selector frame
+        question_selector_frame = tk.Frame(top_frame)
+        question_selector_frame.pack(side=tk.RIGHT, padx=5)
+        
+        tk.Label(question_selector_frame, text="Question #:").pack(side=tk.LEFT, padx=2)
+        
+        self.question_selector = tk.Entry(question_selector_frame, width=5)
+        self.question_selector.pack(side=tk.LEFT, padx=2)
+        
+        self.jump_btn = tk.Button(question_selector_frame, text="Jump", command=self.jump_to_question)
+        self.jump_btn.pack(side=tk.LEFT, padx=2)
+        self.jump_btn.config(state=tk.DISABLED)
+        
         # Middle frame for context display
         context_frame = tk.Frame(self.root)
         context_frame.pack(fill=tk.X, padx=10, pady=5)
@@ -148,8 +161,17 @@ class TestSystem:
             messagebox.showerror("Error", "No valid questions found in the CSV file.")
             return
         
-        # Reset error notes
-        self.error_notes = []
+        # Load existing error notes if they exist
+        notes_path = os.path.join(self.data_folder, "error_notes.json")
+        if os.path.exists(notes_path):
+            try:
+                with open(notes_path, 'r') as f:
+                    self.error_notes = json.load(f)
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to load error notes: {str(e)}")
+                self.error_notes = []
+        else:
+            self.error_notes = []
         
         # Update UI
         self.dataset_label.config(text=f"Loaded {len(self.questions)} questions")
@@ -160,6 +182,7 @@ class TestSystem:
         
         # Enable buttons
         self.next_btn.config(state=tk.NORMAL)
+        self.jump_btn.config(state=tk.NORMAL)
         
         # Load first question
         self.current_question_idx = -1
@@ -289,8 +312,21 @@ Evaluate whether the user's answer is correct. Return your evaluation in the req
         notes_path = os.path.join(self.data_folder, "error_notes.json")
         
         try:
+            # Load existing notes if the file exists
+            existing_notes = []
+            if os.path.exists(notes_path):
+                with open(notes_path, 'r') as f:
+                    existing_notes = json.load(f)
+            
+            # Combine existing notes with new notes
+            all_notes = existing_notes + self.error_notes
+            
+            # Save all notes to the file
             with open(notes_path, 'w') as f:
-                json.dump(self.error_notes, f, indent=2)
+                json.dump(all_notes, f, indent=2)
+                
+            # Update self.error_notes to include all notes
+            self.error_notes = all_notes
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save error notes: {str(e)}")
     
@@ -318,6 +354,41 @@ Evaluate whether the user's answer is correct. Return your evaluation in the req
             notes_text.insert(tk.END, "\n" + "-"*50 + "\n\n")
         
         notes_text.config(state=tk.DISABLED)
+
+    def jump_to_question(self):
+        try:
+            # Get the question number from the input field
+            question_num = int(self.question_selector.get().strip())
+            
+            # Validate the question number
+            if question_num < 1 or question_num > len(self.questions):
+                messagebox.showerror("Error", f"Please enter a valid question number between 1 and {len(self.questions)}")
+                return
+            
+            # Set the current question index (0-based)
+            self.current_question_idx = question_num - 1
+            
+            # Reset feedback
+            self.feedback_text.config(state=tk.NORMAL)
+            self.feedback_text.delete(1.0, tk.END)
+            self.feedback_text.config(state=tk.DISABLED)
+            
+            # Clear answer
+            self.answer_text.delete(1.0, tk.END)
+            
+            # Display the selected question
+            self.question_text.config(state=tk.NORMAL)
+            self.question_text.delete(1.0, tk.END)
+            self.question_text.insert(tk.END, self.questions[self.current_question_idx]['question'])
+            self.question_text.config(state=tk.DISABLED)
+            
+            # Enable/disable buttons
+            self.submit_btn.config(state=tk.NORMAL)
+            self.show_answer_btn.config(state=tk.NORMAL)
+            self.notes_btn.config(state=tk.NORMAL if self.error_notes else tk.DISABLED)
+            
+        except ValueError:
+            messagebox.showerror("Error", "Please enter a valid number")
 
 def main():
     root = tk.Tk()
