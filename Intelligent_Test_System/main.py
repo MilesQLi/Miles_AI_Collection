@@ -309,29 +309,32 @@ Evaluate whether the user's answer is correct. Return your evaluation in the req
         if not self.error_notes or not self.data_folder:
             return
             
-        notes_path = os.path.join(self.data_folder, "error_notes.json")
+        notes_path = os.path.join(self.data_folder, "error_notes.txt")
         
         try:
-            # Load existing notes if the file exists
-            existing_notes = []
-            if os.path.exists(notes_path):
-                with open(notes_path, 'r') as f:
-                    existing_notes = json.load(f)
+            # Get the latest note (the one we just added)
+            latest_note = self.error_notes[-1]
             
-            # Combine existing notes with new notes
-            all_notes = existing_notes + self.error_notes
+            # Format the note as text
+            note_text = f"""
+Note - {latest_note['timestamp']}
+Question: {latest_note['question']}
+User Answer: {latest_note['user_answer']}
+Correct Answer: {latest_note['correct_answer']}
+Note: {latest_note['note']}
+{"-"*50}
+"""
             
-            # Save all notes to the file
-            with open(notes_path, 'w') as f:
-                json.dump(all_notes, f, indent=2)
+            # Append the note to the file
+            with open(notes_path, 'a', encoding='utf-8') as f:
+                f.write(note_text)
                 
-            # Update self.error_notes to include all notes
-            self.error_notes = all_notes
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to save error notes: {str(e)}")
+            messagebox.showerror("Error", f"Failed to save error note: {str(e)}")
     
     def show_error_notes(self):
-        if not self.error_notes:
+        notes_path = os.path.join(self.data_folder, "error_notes.txt")
+        if not os.path.exists(notes_path):
             messagebox.showinfo("Info", "No error notes available.")
             return
             
@@ -344,14 +347,12 @@ Evaluate whether the user's answer is correct. Return your evaluation in the req
         notes_text = scrolledtext.ScrolledText(notes_window, wrap=tk.WORD)
         notes_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        # Format and display notes
-        for i, note in enumerate(self.error_notes):
-            notes_text.insert(tk.END, f"Note #{i+1} - {note['timestamp']}\n")
-            notes_text.insert(tk.END, f"Question: {note['question']}\n")
-            notes_text.insert(tk.END, f"User Answer: {note['user_answer']}\n")
-            notes_text.insert(tk.END, f"Correct Answer: {note['correct_answer']}\n")
-            notes_text.insert(tk.END, f"Note: {note['note']}\n")
-            notes_text.insert(tk.END, "\n" + "-"*50 + "\n\n")
+        try:
+            # Read and display the entire file
+            with open(notes_path, 'r', encoding='utf-8') as f:
+                notes_text.insert(tk.END, f.read())
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to read error notes: {str(e)}")
         
         notes_text.config(state=tk.DISABLED)
 
