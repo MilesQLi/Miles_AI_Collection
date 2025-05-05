@@ -19,7 +19,7 @@ from langchain_openai import ChatOpenAI
 from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain.memory import ConversationBufferWindowMemory
-from langchain.agents import AgentExecutor, create_openai_functions_agent, tool
+from langchain.agents import AgentExecutor, create_openai_tools_agent, tool
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_community.tools import DuckDuckGoSearchRun
@@ -32,14 +32,16 @@ USER_NAME = "User" # Replace with your desired user name
 HOST_NAME = "Assistant" # Replace with your desired assistant name
 
 # LLM Configuration
-LOCAL_API_BASE = "http://localhost:11434/v1" # Standard Ollama API endpoint
+#LOCAL_API_BASE = "http://localhost:11434/v1" # Standard Ollama API endpoint
+LOCAL_API_BASE = "http://localhost:1234/v1" # Standard Ollama API endpoint
+OLLAMA_LOCAL_API_BASE = "http://localhost:11434/v1" # Standard Ollama API endpoint
 # LOCAL_API_BASE = "http://host.docker.internal:11434/v1" # Use if running Ollama in Docker Desktop
 LOCAL_MODEL_NAME = "qwen2.5:14b-instruct-q6_K" # CHANGE TO YOUR AVAILABLE OLLAMA MODEL
 DUMMY_API_KEY = "ollama" # Placeholder API key for Ollama
 
 # Embedding Configuration
 EMBEDDING_MODEL_NAME = "nomic-embed-text" # Common Ollama embedding model
-OLLAMA_BASE_URL = LOCAL_API_BASE.replace("/v1", "") # Ollama embeddings often use the base URL
+OLLAMA_BASE_URL = OLLAMA_LOCAL_API_BASE.replace("/v1", "") # Ollama embeddings often use the base URL
 
 # RAG / Vector Store Configuration
 FAISS_INDEX_PATH = "faiss_index_assistant"
@@ -59,6 +61,7 @@ try:
         base_url=LOCAL_API_BASE,
         model=LOCAL_MODEL_NAME,
         api_key=DUMMY_API_KEY,
+        stream=False, 
         temperature=0.2, # Lower temperature for more factual/tool-based answers
         streaming=False, # Streaming complicates agent execution logic in Tkinter
         # request_timeout=60, # Increase if needed
@@ -275,15 +278,7 @@ agent_prompt = ChatPromptTemplate.from_messages(
             "system",
             f"You are '{HOST_NAME}', a helpful and friendly personal assistant for '{USER_NAME}'. "
             f"The current time is {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}. "
-            "You have access to the following tools. Use them when necessary to answer the user's questions or fulfill their requests accurately and efficiently. "
-            "Think step-by-step if needed before responding. If you use a tool, briefly mention it in your response (e.g., 'According to a web search...', 'I've saved that note for you.', 'Looking at your calendar...'). "
-            "Prioritize using the calendar and notes tools for relevant requests before resorting to web search or code execution unless specifically asked. "
-            "If asked to save information, use the 'save_note_to_vector_store' tool. "
-            "If asked about past information or notes, use the 'retrieve_notes_from_vector_store' tool. "
-            "If asked to add an event or reminder, use the 'add_calendar_event' tool. "
-            "If asked about the schedule or events, use the 'retrieve_calendar_events' tool. "
-            "For calculations or coding tasks, use the Python REPL tool. "
-            "For general knowledge or current events beyond your internal knowledge or saved notes, use the search engine."
+            "Use the tools when necessary to answer the user's questions or fulfill their requests accurately and efficiently. "
         ),
         MessagesPlaceholder(variable_name="chat_history"),
         ("human", "{input}"),
@@ -292,14 +287,14 @@ agent_prompt = ChatPromptTemplate.from_messages(
 )
 
 try:
-    agent = create_openai_functions_agent(llm, tools, agent_prompt)
+    agent = create_openai_tools_agent(llm, tools, agent_prompt)
     agent_executor = AgentExecutor(
         agent=agent,
         tools=tools,
         memory=memory,
         verbose=True, # Set to False for less console output
         handle_parsing_errors=True, # Try to gracefully handle LLM output errors
-        max_iterations=5, # Prevent runaway agents
+        max_iterations=10, # Prevent runaway agents
     )
     logging.info("Agent Executor created successfully.")
 except Exception as e:
