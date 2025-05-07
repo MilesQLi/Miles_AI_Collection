@@ -15,29 +15,35 @@ The launcher provides an easy-to-use interface to browse and start any applicati
 
 ## Applications
 
-### 1. AI Text Completion App (auto_completion_app/)
+### 1. Virtual Assistant (VirtualAssistanceLangChain/)
+
+A powerful virtual assistant system with tool usage functions that support RAG, such as calendar management, note-taking capabilities for persistent memory, python code execution, and web search functionality. Built with Python, LangChain, and Tkinter, it provides a user-friendly interface for interacting with an AI assistant. The system features calendar management with event scheduling and reminders, note-taking with vector storage, web search capabilities, and persistent storage for both calendar events and knowledge base.
+
+![Virtual Assistant Screenshot](VirtualAssistanceLangChain/screenshot.png)
+
+### 2. AI Text Completion App (auto_completion_app/)
 
 A desktop application that provides real-time AI-powered text completion suggestions as you type, supporting both OpenAI and Ollama language models. The app features a clean, intuitive interface with customizable settings for different AI models and completion behaviors. Perfect for writers, developers, or anyone looking to enhance their typing efficiency with AI assistance.
 
 ![AI Text Completion App Screenshot](auto_completion_app/screenshot.png)
 
-### 2. Intelligent Linux Web Console (Linux_intelligent_web_console/)
+### 3. Intelligent Linux Web Console (Linux_intelligent_web_console/)
 
 A web-based Linux terminal console powered by LangChain and LLMs that helps users execute commands through natural language understanding. The console combines traditional terminal functionality with AI assistance to make command-line operations more accessible.
 
 ![Intelligent Linux Web Console Screenshot](Linux_intelligent_web_console/screenshot.png)
 
-### 3. Intelligent Test System (Intelligent_Test_System/)
+### 4. Intelligent Test System (Intelligent_Test_System/)
 
 A modern, AI-powered test-taking application that provides intelligent feedback and evaluation for user responses. Built with Python and Tkinter, it uses a local LLM (Qwen 2.5 32B by default) to evaluate answers based on meaning and concepts, not just exact wording. The system provides helpful hints for incorrect answers and maintains a log of errors for review, making it an excellent tool for self-assessment and learning.
 
 ![Intelligent Test System Screenshot](Intelligent_Test_System/screenshot.png)
 
-### 4. Lightning Fabric Distributed Pretraining (LightningFabricDistributedPretraining/)
+### 5. Lightning Fabric Distributed Pretraining (LightningFabricDistributedPretraining/)
 
 A flexible framework for distributed pretraining of language models using Lightning Fabric with FSDP (Fully Sharded Data Parallel) strategy. This application allows you to pretrain any Hugging Face model on any dataset with a simple YAML configuration. It supports multi-GPU and multi-node training with optimized performance for modern NVIDIA GPUs with Tensor Cores.
 
-### 5. HuggingFace Pretraining Script (HuggingFace_Pretraining/)
+### 6. HuggingFace Pretraining Script (HuggingFace_Pretraining/)
 
 A comprehensive and configurable script for pretraining language models using the HuggingFace Transformers library. This script provides a streamlined way to pretrain models on custom datasets with features including:
 
@@ -53,7 +59,7 @@ Example usage:
 accelerate launch --config_file ./default_config.yaml pretrain.py --config default_pretrain_config.yaml
 ```
 
-### 6. HuggingFace SFT Training Script (HuggingFace_SFT/)
+### 7. HuggingFace SFT Training Script (HuggingFace_SFT/)
 
 A powerful script for conducting distributed fine-tuning of language models using Supervised Fine-Tuning (SFT) with configurable parameters loaded from a YAML file.  It properly sets up the training mechanics so as no to train on input part. It is a perfect template for researchers and developers looking to fine-tune language models on their specific datasets with minimal setup.
 

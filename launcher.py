@@ -78,6 +78,11 @@ class AppLauncher:
         """Populate the listbox with available applications"""
         # Dictionary to store app descriptions
         self.app_info = {
+            
+            "VirtualAssistanceLangChain": {
+                "name": "Virtual Assistant with LangChain",
+                "description": "An intelligent virtual assistant powered by LangChain that can help with various tasks through natural language interaction. Features include task management, information retrieval, and conversational capabilities."
+            },
             "auto_completion_app": {
                 "name": "AI Text Completion App",
                 "description": "A desktop application that provides real-time AI-powered text completion suggestions as you type, supporting both OpenAI and Ollama language models."
