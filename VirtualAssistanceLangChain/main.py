@@ -202,16 +202,9 @@ def add_calendar_event(event_content: str, event_datetime_str: str) -> str:
         if not event_dt:
             return f"Error: Could not understand the date/time '{event_datetime_str}'. Please specify a clearer date and time."
 
-        with calendar_lock:
-            event_id = next_event_id
-            calendar_events.append({
-                'id': event_id,
-                'content': event_content,
-                'datetime': event_dt
-            })
-            next_event_id += 1
-            # Sort events after adding
-            calendar_events.sort(key=lambda x: x['datetime'])
+        # Get the app instance from the root window
+        app = root.winfo_children()[0]
+        app.add_calendar_event(event_content, event_dt)
 
         logging.info(f"Added calendar event: '{event_content}' at {event_dt.strftime('%Y-%m-%d %H:%M:%S')}")
         return f"OK. I've added '{event_content}' to your calendar for {event_dt.strftime('%A, %B %d, %Y at %I:%M %p')}."
@@ -309,7 +302,7 @@ class VirtualAssistantApp:
         self.root = root
         self.root.title(f"{USER_NAME}'s Personal Assistant ({HOST_NAME})")
         # Increase initial size
-        self.root.geometry("800x600")
+        self.root.geometry("1024x600")
 
         # --- Data ---
         self.chat_history = [] # For display purposes
@@ -341,8 +334,33 @@ class VirtualAssistantApp:
         self.main_frame = tk.Frame(root, padx=10, pady=10)
         self.main_frame.pack(fill=tk.BOTH, expand=True)
 
+        # Create a horizontal split frame
+        self.split_frame = tk.Frame(self.main_frame)
+        self.split_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Chat Frame (Left side)
+        self.chat_frame = tk.Frame(self.split_frame)
+        self.chat_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Calendar Frame (Right side)
+        self.calendar_frame = tk.Frame(self.split_frame, bd=2, relief=tk.GROOVE, width=300)  # Fixed width
+        self.calendar_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 0))
+        self.calendar_frame.pack_propagate(False)  # Prevent frame from shrinking
+        
+        # Calendar Header
+        self.calendar_header = tk.Label(self.calendar_frame, text="Upcoming Events", font=('Arial', 10, 'bold'))
+        self.calendar_header.pack(pady=5)
+        
+        # Calendar Events Display
+        self.calendar_display = scrolledtext.ScrolledText(self.calendar_frame, wrap=tk.WORD, width=60, state='disabled')
+        self.calendar_display.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Refresh Calendar Button
+        self.refresh_calendar_btn = tk.Button(self.calendar_frame, text="Refresh Calendar", command=self.refresh_calendar_display)
+        self.refresh_calendar_btn.pack(pady=5)
+
         # Chat Display Area
-        self.chat_display = scrolledtext.ScrolledText(self.main_frame, wrap=tk.WORD, state='disabled', height=20)
+        self.chat_display = scrolledtext.ScrolledText(self.chat_frame, wrap=tk.WORD, state='disabled')
         self.chat_display.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         # Configure tags for styling
         self.chat_display.tag_configure('user', foreground='blue', font=('Arial', 10, 'bold'))
@@ -351,7 +369,7 @@ class VirtualAssistantApp:
         self.chat_display.tag_configure('error', foreground='red', font=('Arial', 10, 'bold'))
 
         # Input Area
-        self.input_frame = tk.Frame(self.main_frame)
+        self.input_frame = tk.Frame(self.chat_frame)
         self.input_frame.pack(fill=tk.X)
 
         self.input_entry = tk.Entry(self.input_frame, font=('Arial', 11))
@@ -377,6 +395,9 @@ class VirtualAssistantApp:
         self.calendar_thread_stop_event = threading.Event()
         self.calendar_thread = threading.Thread(target=self.background_calendar_checker, daemon=True)
         self.calendar_thread.start()
+
+        # Initial calendar display
+        self.refresh_calendar_display()
 
         # Start queue checker
         self.root.after(100, self.check_message_queue)
@@ -593,6 +614,43 @@ class VirtualAssistantApp:
 
             self.root.destroy()
             logging.info("Application closed.")
+
+    def refresh_calendar_display(self):
+        """Updates the calendar display with upcoming events."""
+        self.calendar_display.config(state='normal')
+        self.calendar_display.delete(1.0, tk.END)
+        
+        now = datetime.now()
+        end_time = now + timedelta(days=7)  # Show events for next 7 days
+        
+        with calendar_lock:
+            # Filter and sort events by datetime
+            upcoming_events = [event for event in calendar_events if now <= event['datetime'] <= end_time]
+            upcoming_events.sort(key=lambda x: x['datetime'])  # Sort by datetime
+            
+            if not upcoming_events:
+                self.calendar_display.insert(tk.END, "No upcoming events in the next 7 days.")
+            else:
+                for event in upcoming_events:
+                    event_time = event['datetime'].strftime('%A, %B %d at %I:%M %p')
+                    self.calendar_display.insert(tk.END, f"• {event['content']}\n   {event_time}\n\n")
+        
+        self.calendar_display.config(state='disabled')
+
+    def add_calendar_event(self, event_content, event_datetime):
+        """Adds an event to the calendar and updates the display."""
+        with calendar_lock:
+            event_id = next_event_id
+            calendar_events.append({
+                'id': event_id,
+                'content': event_content,
+                'datetime': event_datetime
+            })
+            calendar_events.sort(key=lambda x: x['datetime'])
+            next_event_id += 1
+        
+        # Update the calendar display
+        self.refresh_calendar_display()
 
 # --- Main Execution ---
 if __name__ == "__main__":
