@@ -13,6 +13,7 @@ import yaml
 import logging
 import traceback
 from queue import Queue # For thread-safe communication
+import sqlite3 # For persistent calendar
 
 # LangChain components
 from langchain_openai import ChatOpenAI
@@ -32,26 +33,44 @@ USER_NAME = "User" # Replace with your desired user name
 HOST_NAME = "Assistant" # Replace with your desired assistant name
 
 # LLM Configuration
-#LOCAL_API_BASE = "http://localhost:11434/v1" # Standard Ollama API endpoint
-LOCAL_API_BASE = "http://localhost:1234/v1" # Standard Ollama API endpoint
-OLLAMA_LOCAL_API_BASE = "http://localhost:11434/v1" # Standard Ollama API endpoint
-# LOCAL_API_BASE = "http://host.docker.internal:11434/v1" # Use if running Ollama in Docker Desktop
+LOCAL_API_BASE = "http://localhost:1234/v1" # Standard Ollama API endpoint (e.g., LM Studio)
+OLLAMA_LOCAL_API_BASE = "http://localhost:11434/v1" # Standard Ollama API endpoint (for embeddings if different)
 LOCAL_MODEL_NAME = "qwen2.5:14b-instruct-q6_K" # CHANGE TO YOUR AVAILABLE OLLAMA MODEL
-DUMMY_API_KEY = "ollama" # Placeholder API key for Ollama
+DUMMY_API_KEY = "ollama" # Placeholder API key
 
 # Embedding Configuration
 EMBEDDING_MODEL_NAME = "nomic-embed-text" # Common Ollama embedding model
-OLLAMA_BASE_URL = OLLAMA_LOCAL_API_BASE.replace("/v1", "") # Ollama embeddings often use the base URL
+OLLAMA_BASE_URL = OLLAMA_LOCAL_API_BASE.replace("/v1", "")
 
 # RAG / Vector Store Configuration
 FAISS_INDEX_PATH = "faiss_index_assistant"
 
 # Calendar Configuration
+CALENDAR_DB_PATH = "calendar_events.db" # SQLite database for calendar
 CALENDAR_REMINDER_MINUTES = 15
-CALENDAR_CHECK_INTERVAL_SECONDS = 60 # Check every 60 seconds
+CALENDAR_CHECK_INTERVAL_SECONDS = 60
 
 # Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# --- Database Setup ---
+def _get_db_connection():
+    conn = sqlite3.connect(CALENDAR_DB_PATH)
+    return conn
+
+def init_calendar_db():
+    conn = _get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content TEXT NOT NULL,
+            event_datetime TEXT NOT NULL
+        )
+    """)
+    conn.commit()
+    conn.close()
+    logging.info(f"Calendar database initialized at {CALENDAR_DB_PATH}")
 
 # --- LangChain Setup ---
 
@@ -61,10 +80,9 @@ try:
         base_url=LOCAL_API_BASE,
         model=LOCAL_MODEL_NAME,
         api_key=DUMMY_API_KEY,
-        stream=False, 
-        temperature=0.2, # Lower temperature for more factual/tool-based answers
-        streaming=False, # Streaming complicates agent execution logic in Tkinter
-        # request_timeout=60, # Increase if needed
+        stream=False,
+        temperature=0.2,
+        streaming=False,
     )
     logging.info(f"LLM initialized: Model={LOCAL_MODEL_NAME}, BaseURL={LOCAL_API_BASE}")
 except Exception as e:
@@ -76,9 +94,8 @@ except Exception as e:
 try:
     embeddings = OllamaEmbeddings(
         model=EMBEDDING_MODEL_NAME,
-        base_url=OLLAMA_BASE_URL # Use the modified base URL
+        base_url=OLLAMA_BASE_URL
     )
-    # Test embedding
     _ = embeddings.embed_query("Test query")
     logging.info(f"Embeddings initialized: Model={EMBEDDING_MODEL_NAME}, BaseURL={OLLAMA_BASE_URL}")
 except Exception as e:
@@ -86,29 +103,25 @@ except Exception as e:
     messagebox.showerror("Embedding Error", f"Could not initialize Ollama embeddings with model '{EMBEDDING_MODEL_NAME}' at {OLLAMA_BASE_URL}.\nError: {e}")
     exit()
 
-# 3. Vector Store (FAISS) and In-Memory Calendar
+# 3. Vector Store (FAISS) and In-Memory Calendar (populated from DB)
 knowledge_base_texts = []
 knowledge_base_metadatas = []
-calendar_events = [] # List to store {'id': int, 'content': str, 'datetime': datetime}
-calendar_lock = threading.Lock()
+calendar_events = [] # List to store {'id': int, 'content': str, 'datetime': datetime} - NOW POPULATED FROM DB
+calendar_lock = threading.Lock() # Protects access to calendar_events list
 vector_store = None
-next_event_id = 1
+next_event_id = 1 # Will be set based on max ID from DB
 
 def load_vector_store():
-    global vector_store, knowledge_base_texts, knowledge_base_metadatas
+    global vector_store
     if os.path.exists(FAISS_INDEX_PATH):
         try:
             vector_store = FAISS.load_local(FAISS_INDEX_PATH, embeddings, allow_dangerous_deserialization=True)
-            # Note: Loading doesn't automatically repopulate the text/metadata lists.
-            # This simple implementation assumes we primarily interact via the vector store interface.
-            # For perfect state restoration, texts/metadata would need separate persistence.
             logging.info(f"Loaded FAISS index from {FAISS_INDEX_PATH}")
         except Exception as e:
             logging.error(f"Failed to load FAISS index: {e}. Creating a new one.", exc_info=True)
             vector_store = FAISS.from_texts(["Initial knowledge base entry: Assistant started."], embedding=embeddings, metadatas=[{"timestamp": datetime.now().isoformat()}])
     else:
         logging.info("No FAISS index found. Creating a new one.")
-        # Initialize with a dummy entry to avoid issues with empty stores
         vector_store = FAISS.from_texts(["Initial knowledge base entry: Assistant started."], embedding=embeddings, metadatas=[{"timestamp": datetime.now().isoformat()}])
 
 def save_vector_store():
@@ -121,197 +134,156 @@ def save_vector_store():
 
 # 4. Memory
 memory = ConversationBufferWindowMemory(
-    k=5, # Remember last 5 turns
-    memory_key="chat_history",
-    return_messages=True # Important for agents
+    k=5, memory_key="chat_history", return_messages=True
 )
 
 # --- Custom Tools ---
 
-# Tool for saving notes to FAISS
 @tool
 def save_note_to_vector_store(note: str) -> str:
-    """
-    Saves a piece of information or a note provided by the user to the knowledge base
-    for later retrieval. Use this when the user provides important information to remember
-    or asks to save something. Input should be the text content of the note.
-    """
+    """Saves a piece of information or a note provided by the user to the knowledge base."""
     global vector_store
     if not note or not isinstance(note, str):
-        return "Error: Invalid note content provided. Please provide text to save."
+        return "Error: Invalid note content provided."
     try:
         metadata = {"timestamp": datetime.now().isoformat(), "source": "user_note"}
         vector_store.add_texts([note], metadatas=[metadata])
-        save_vector_store() # Save after adding
+        save_vector_store()
         logging.info(f"Saved note to vector store: {note[:50]}...")
         return f"Note saved successfully: '{note[:50]}...'"
     except Exception as e:
-        logging.error(f"Error saving note to vector store: {e}", exc_info=True)
+        logging.error(f"Error saving note: {e}", exc_info=True)
         return f"Error: Could not save note. Details: {e}"
 
-# Tool for retrieving notes from FAISS
 @tool
 def retrieve_notes_from_vector_store(query: str) -> str:
-    """
-    Retrieves relevant information or notes from the knowledge base based on a user's query.
-    Use this when the user asks about past information, saved notes, or refers to something
-    that might have been discussed and saved earlier. Input should be the user's query about the information needed.
-    """
+    """Retrieves relevant information or notes from the knowledge base based on a user's query."""
     global vector_store
     if not query or not isinstance(query, str):
-        return "Error: Invalid query provided. Please provide text to search for."
+        return "Error: Invalid query provided."
     try:
         results = vector_store.similarity_search_with_score(query, k=3)
         if not results:
-            return "No relevant notes found in the knowledge base for your query."
-
-        formatted_results = []
-        for doc, score in results:
-            timestamp = doc.metadata.get('timestamp', 'N/A')
-            # Format timestamp if possible
-            try:
-                ts_dt = datetime.fromisoformat(timestamp)
-                formatted_ts = ts_dt.strftime('%Y-%m-%d %H:%M')
-            except:
-                formatted_ts = timestamp # Keep original if parsing fails
-            formatted_results.append(f"- Note (Saved {formatted_ts}, Relevance: {score:.2f}): {doc.page_content}")
-
+            return "No relevant notes found."
+        formatted_results = [
+            f"- Note (Saved {datetime.fromisoformat(doc.metadata.get('timestamp', 'N/A')).strftime('%Y-%m-%d %H:%M') if doc.metadata.get('timestamp') else 'N/A'}, Relevance: {score:.2f}): {doc.page_content}"
+            for doc, score in results
+        ]
         logging.info(f"Retrieved notes for query: {query[:50]}...")
         return "Found the following relevant notes:\n" + "\n".join(formatted_results)
     except Exception as e:
-        logging.error(f"Error retrieving notes from vector store: {e}", exc_info=True)
+        logging.error(f"Error retrieving notes: {e}", exc_info=True)
         return f"Error: Could not retrieve notes. Details: {e}"
 
-# Pydantic model for Calendar Event Input
 class CalendarEventInput(BaseModel):
     event_content: str = Field(..., description="The description or title of the calendar event.")
-    event_datetime_str: str = Field(..., description="The date and time of the event in a natural language format (e.g., 'tomorrow at 3 pm', 'next Friday noon', '2024-08-15 10:00').")
+    event_datetime_str: str = Field(..., description="The date and time of the event (e.g., 'tomorrow at 3 pm').")
 
-# Tool for adding calendar events
 @tool("add_calendar_event", args_schema=CalendarEventInput)
 def add_calendar_event(event_content: str, event_datetime_str: str) -> str:
-    """
-    Adds an event to the user's calendar. Use this when the user wants to schedule
-    something, set a reminder, or add an appointment. Requires the event description
-    and the date/time.
-    """
-    global calendar_events, next_event_id
+    """Adds an event to the user's calendar. Stores persistently."""
     try:
-        # Use dateparser for robust parsing
         event_dt = dateparser.parse(event_datetime_str, settings={'PREFER_DATES_FROM': 'future', 'RETURN_AS_TIMEZONE_AWARE': False})
         if not event_dt:
             return f"Error: Could not understand the date/time '{event_datetime_str}'. Please specify a clearer date and time."
 
-        # Get the app instance from the root window
-        app = root.winfo_children()[0]
-        app.add_calendar_event(event_content, event_dt)
-
-        logging.info(f"Added calendar event: '{event_content}' at {event_dt.strftime('%Y-%m-%d %H:%M:%S')}")
-        return f"OK. I've added '{event_content}' to your calendar for {event_dt.strftime('%A, %B %d, %Y at %I:%M %p')}."
+        conn = _get_db_connection()
+        cursor = conn.cursor()
+        event_dt_iso = event_dt.isoformat()
+        cursor.execute("INSERT INTO events (content, event_datetime) VALUES (?, ?)", (event_content, event_dt_iso))
+        new_event_id = cursor.lastrowid
+        conn.commit()
+        logging.info(f"DB: Added calendar event ID {new_event_id}: '{event_content}' at {event_dt_iso}")
+        return f"OK. I've added '{event_content}' to your calendar for {event_dt.strftime('%A, %B %d, %Y at %I:%M %p')} (ID: {new_event_id}). Your calendar view should update shortly."
     except Exception as e:
-        logging.error(f"Error adding calendar event: {e}", exc_info=True)
-        return f"Error: Could not add calendar event. Details: {e}"
+        logging.error(f"Error in add_calendar_event tool: {e}", exc_info=True)
+        return f"Error: Could not add calendar event to database. Details: {e}"
+    finally:
+        if 'conn' in locals() and conn:
+            conn.close()
 
-# Pydantic model for Calendar Retrieval Input
+
 class CalendarRetrieveInput(BaseModel):
-    start_datetime_str: str = Field(..., description="The start date/time for retrieving events (e.g., 'today', 'next week', 'August 1st').")
-    end_datetime_str: str = Field(..., description="The end date/time for retrieving events (e.g., 'today evening', 'end of next week', 'August 5th').")
+    start_datetime_str: str = Field(..., description="The start date/time for retrieving events (e.g., 'today').")
+    end_datetime_str: str = Field(..., description="The end date/time for retrieving events (e.g., 'end of today').")
 
-# Tool for retrieving calendar events
 @tool("retrieve_calendar_events", args_schema=CalendarRetrieveInput)
 def retrieve_calendar_events(start_datetime_str: str, end_datetime_str: str) -> str:
-    """
-    Retrieves events from the user's calendar within a specified date/time range.
-    Use this when the user asks about their schedule, upcoming events, or what they have planned.
-    """
-    global calendar_events
+    """Retrieves events from the user's calendar within a specified date/time range from persistent storage."""
     try:
         start_dt = dateparser.parse(start_datetime_str, settings={'PREFER_DATES_FROM': 'future', 'RETURN_AS_TIMEZONE_AWARE': False})
         end_dt = dateparser.parse(end_datetime_str, settings={'PREFER_DATES_FROM': 'future', 'RETURN_AS_TIMEZONE_AWARE': False})
 
         if not start_dt or not end_dt:
-            return "Error: Could not understand the date range. Please specify clearer start and end times."
+            return "Error: Could not understand the date range."
         if start_dt > end_dt:
-             # Sensible default: If end is before start, assume end is end of start day
-             end_dt = start_dt.replace(hour=23, minute=59, second=59)
-             # return "Error: Start date/time must be before the end date/time."
+            end_dt = start_dt.replace(hour=23, minute=59, second=59) # Default to end of start day
 
-        found_events = []
-        with calendar_lock:
-            for event in calendar_events:
-                if start_dt <= event['datetime'] <= end_dt:
-                    found_events.append(f"- {event['content']} on {event['datetime'].strftime('%A, %B %d at %I:%M %p')}")
+        conn = _get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT content, event_datetime FROM events WHERE event_datetime BETWEEN ? AND ? ORDER BY event_datetime ASC",
+            (start_dt.isoformat(), end_dt.isoformat())
+        )
+        db_events = cursor.fetchall()
+        conn.close()
 
-        logging.info(f"Retrieved calendar events between {start_dt.strftime('%Y-%m-%d %H:%M')} and {end_dt.strftime('%Y-%m-%d %H:%M')}")
+        found_events = [
+            f"- {row[0]} on {datetime.fromisoformat(row[1]).strftime('%A, %B %d at %I:%M %p')}"
+            for row in db_events
+        ]
+        
+        logging.info(f"Retrieved {len(found_events)} calendar events from DB between {start_dt.isoformat()} and {end_dt.isoformat()}")
 
         if not found_events:
             return f"You have no events scheduled between {start_dt.strftime('%B %d')} and {end_dt.strftime('%B %d')}."
         else:
             return f"Here are your scheduled events between {start_dt.strftime('%B %d')} and {end_dt.strftime('%B %d')}:\n" + "\n".join(found_events)
-
     except Exception as e:
-        logging.error(f"Error retrieving calendar events: {e}", exc_info=True)
+        logging.error(f"Error retrieving calendar events from DB: {e}", exc_info=True)
         return f"Error: Could not retrieve calendar events. Details: {e}"
 
 # --- Agent Setup ---
 tools = [
-    DuckDuckGoSearchRun(),
-    PythonREPLTool(),
-    save_note_to_vector_store,
-    retrieve_notes_from_vector_store,
-    add_calendar_event,
-    retrieve_calendar_events,
+    DuckDuckGoSearchRun(), PythonREPLTool(),
+    save_note_to_vector_store, retrieve_notes_from_vector_store,
+    add_calendar_event, retrieve_calendar_events,
 ]
 
-# System prompt defining the agent's behavior and tool usage
-# Note: Adjust persona details as needed
-agent_prompt = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            f"You are '{HOST_NAME}', a helpful and friendly personal assistant for '{USER_NAME}'. "
-            f"The current time is {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}. "
-            "Use the tools when necessary to answer the user's questions or fulfill their requests accurately and efficiently. "
-        ),
-        MessagesPlaceholder(variable_name="chat_history"),
-        ("human", "{input}"),
-        MessagesPlaceholder(variable_name="agent_scratchpad"), # For agent's intermediate steps
-    ]
-)
+agent_prompt = ChatPromptTemplate.from_messages([
+    ("system", f"You are '{HOST_NAME}', a helpful personal assistant for '{USER_NAME}'. The current time is {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}. Use tools when necessary."),
+    MessagesPlaceholder(variable_name="chat_history"),
+    ("human", "{input}"),
+    MessagesPlaceholder(variable_name="agent_scratchpad"),
+])
 
 try:
     agent = create_openai_tools_agent(llm, tools, agent_prompt)
     agent_executor = AgentExecutor(
-        agent=agent,
-        tools=tools,
-        memory=memory,
-        verbose=True, # Set to False for less console output
-        handle_parsing_errors=True, # Try to gracefully handle LLM output errors
-        max_iterations=10, # Prevent runaway agents
+        agent=agent, tools=tools, memory=memory, verbose=True,
+        handle_parsing_errors=True, max_iterations=10,
     )
     logging.info("Agent Executor created successfully.")
 except Exception as e:
     logging.error(f"Failed to create Agent Executor: {e}", exc_info=True)
-    messagebox.showerror("Agent Error", f"Could not create the LangChain agent.\nError: {e}")
-    agent_executor = None # Disable agent if creation fails
+    messagebox.showerror("Agent Error", f"Could not create LangChain agent.\nError: {e}")
+    agent_executor = None
 
 
 # --- Tkinter Application ---
 class VirtualAssistantApp:
-    def __init__(self, root):
-        self.root = root
+    def __init__(self, root_tk):
+        self.root = root_tk
         self.root.title(f"{USER_NAME}'s Personal Assistant ({HOST_NAME})")
-        # Increase initial size
         self.root.geometry("1024x600")
 
-        # --- Data ---
-        self.chat_history = [] # For display purposes
+        self.chat_history = []
         self.reminded_event_ids = set()
-        self.message_queue = Queue() # Thread-safe queue for messages from background thread
+        self.message_queue = Queue()
 
-        # --- UI Elements ---
         # Menu Bar
-        self.menu_bar = tk.Menu(root)
+        self.menu_bar = tk.Menu(self.root)
+        # ... (menu setup - unchanged) ...
         self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.file_menu.add_command(label="Clear Chat", command=self.clear_chat)
         self.file_menu.add_command(label="Save Chat History", command=self.save_chat_history)
@@ -320,197 +292,190 @@ class VirtualAssistantApp:
         self.menu_bar.add_cascade(label="File", menu=self.file_menu)
         self.root.config(menu=self.menu_bar)
 
-        # Top Frame for Controls
-        self.top_frame = tk.Frame(root, pady=5)
+        self.top_frame = tk.Frame(self.root, pady=5)
         self.top_frame.pack(fill=tk.X)
-
-        # Tool Usage Checkbox
-        self.use_tools_var = BooleanVar(value=True) # Default to using tools
+        self.use_tools_var = BooleanVar(value=True)
         self.tools_checkbox = Checkbutton(self.top_frame, text="Enable Tools (Agent)", variable=self.use_tools_var)
         self.tools_checkbox.pack(side=tk.LEFT, padx=10)
 
-
-        # Main Frame for Chat and Input
-        self.main_frame = tk.Frame(root, padx=10, pady=10)
+        self.main_frame = tk.Frame(self.root, padx=10, pady=10)
         self.main_frame.pack(fill=tk.BOTH, expand=True)
-
-        # Create a horizontal split frame
         self.split_frame = tk.Frame(self.main_frame)
         self.split_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Chat Frame (Left side)
         self.chat_frame = tk.Frame(self.split_frame)
         self.chat_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        # Calendar Frame (Right side)
-        self.calendar_frame = tk.Frame(self.split_frame, bd=2, relief=tk.GROOVE, width=300)  # Fixed width
+        self.calendar_frame = tk.Frame(self.split_frame, bd=2, relief=tk.GROOVE, width=300)
         self.calendar_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 0))
-        self.calendar_frame.pack_propagate(False)  # Prevent frame from shrinking
+        self.calendar_frame.pack_propagate(False)
         
-        # Calendar Header
         self.calendar_header = tk.Label(self.calendar_frame, text="Upcoming Events", font=('Arial', 10, 'bold'))
         self.calendar_header.pack(pady=5)
-        
-        # Calendar Events Display
-        self.calendar_display = scrolledtext.ScrolledText(self.calendar_frame, wrap=tk.WORD, width=60, state='disabled')
+        self.calendar_display = scrolledtext.ScrolledText(self.calendar_frame, wrap=tk.WORD, width=35, state='disabled') # Adjusted width
         self.calendar_display.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
-        # Refresh Calendar Button
-        self.refresh_calendar_btn = tk.Button(self.calendar_frame, text="Refresh Calendar", command=self.refresh_calendar_display)
+        self.refresh_calendar_btn = tk.Button(self.calendar_frame, text="Refresh Calendar", command=self.manual_refresh_calendar)
         self.refresh_calendar_btn.pack(pady=5)
 
-        # Chat Display Area
         self.chat_display = scrolledtext.ScrolledText(self.chat_frame, wrap=tk.WORD, state='disabled')
         self.chat_display.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-        # Configure tags for styling
         self.chat_display.tag_configure('user', foreground='blue', font=('Arial', 10, 'bold'))
         self.chat_display.tag_configure('assistant', foreground='green', font=('Arial', 10))
         self.chat_display.tag_configure('system', foreground='gray', font=('Arial', 9, 'italic'))
         self.chat_display.tag_configure('error', foreground='red', font=('Arial', 10, 'bold'))
 
-        # Input Area
         self.input_frame = tk.Frame(self.chat_frame)
         self.input_frame.pack(fill=tk.X)
-
         self.input_entry = tk.Entry(self.input_frame, font=('Arial', 11))
         self.input_entry.pack(fill=tk.X, expand=True, side=tk.LEFT, padx=(0, 10))
         self.input_entry.bind("<Return>", self.send_message_event)
-
         self.send_button = tk.Button(self.input_frame, text="Send", command=self.send_message_event, width=10)
         self.send_button.pack(side=tk.RIGHT)
 
-        # Status Bar (Optional)
         self.status_var = tk.StringVar()
-        self.status_bar = tk.Label(root, textvariable=self.status_var, bd=1, relief=tk.SUNKEN, anchor=tk.W)
+        self.status_bar = tk.Label(self.root, textvariable=self.status_var, bd=1, relief=tk.SUNKEN, anchor=tk.W)
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
         self.set_status("Ready.")
 
         # --- Initialization ---
-        load_vector_store() # Load existing index if present
-        self.add_message("System", f"Assistant initialized. Type 'clear' to reset chat. Current time: {datetime.now().strftime('%Y-%m-%d %H:%M')}", tag='system')
-        # Load initial memory (optional, could load from saved state)
-        # memory.chat_memory.add_message(SystemMessage(content=agent_prompt.messages[0].prompt.template))
+        init_calendar_db() # Ensure DB and table exist
+        load_vector_store()
+        self._load_calendar_events_from_db() # Load calendar from DB into memory
 
-        # Start background calendar checker
+        self.add_message("System", f"Assistant initialized. Type 'clear' to reset chat. Current time: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n", tag='system')
+        
         self.calendar_thread_stop_event = threading.Event()
         self.calendar_thread = threading.Thread(target=self.background_calendar_checker, daemon=True)
         self.calendar_thread.start()
+        self.refresh_calendar_display() # Initial display
 
-        # Initial calendar display
-        self.refresh_calendar_display()
-
-        # Start queue checker
         self.root.after(100, self.check_message_queue)
-
-        # Handle closing
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
+    def _load_calendar_events_from_db(self):
+        global calendar_events, next_event_id # next_event_id is less critical now
+        max_id_found = 0
+        try:
+            conn = _get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, content, event_datetime FROM events ORDER BY event_datetime ASC")
+            db_rows = cursor.fetchall()
+            conn.close()
+
+            with calendar_lock:
+                calendar_events.clear() # Clear existing in-memory events
+                for row in db_rows:
+                    event_id, content, dt_str = row
+                    calendar_events.append({
+                        'id': event_id,
+                        'content': content,
+                        'datetime': datetime.fromisoformat(dt_str)
+                    })
+                    if event_id > max_id_found:
+                        max_id_found = event_id
+                next_event_id = max_id_found + 1
+            logging.info(f"Loaded {len(calendar_events)} events from DB into memory. Next event ID calculated as {next_event_id}.")
+        except Exception as e:
+            logging.error(f"Error loading calendar events from DB: {e}", exc_info=True)
+            messagebox.showerror("Calendar DB Error", f"Could not load calendar events from database.\nError: {e}")
 
     def set_status(self, text):
         self.status_var.set(text)
         self.root.update_idletasks()
 
     def add_message(self, sender, message, tag='assistant'):
-        """Adds a message to the chat display."""
         self.chat_display.config(state='normal')
-        if self.chat_history: # Add newline if not the first message
-             self.chat_display.insert(tk.END, "\n")
+        if self.chat_history: self.chat_display.insert(tk.END, "\n")
         self.chat_display.insert(tk.END, f"{sender}: ", ('user' if tag == 'user' else tag,))
         self.chat_display.insert(tk.END, message, (tag,))
         self.chat_display.config(state='disabled')
-        self.chat_display.see(tk.END) # Auto-scroll
-        if tag != 'system': # Don't add system status messages to history list
-             self.chat_history.append(f"{sender}: {message}")
+        self.chat_display.see(tk.END)
+        if tag != 'system': self.chat_history.append(f"{sender}: {message}")
 
     def send_message_event(self, event=None):
-        """Handles sending a message from the input entry."""
         user_input = self.input_entry.get().strip()
-        if not user_input:
-            return
-
+        if not user_input: return
         self.input_entry.delete(0, tk.END)
         self.add_message(USER_NAME, user_input, tag='user')
-
-        # Special command: clear chat
         if user_input.lower() == 'clear':
             self.clear_chat()
             return
-
         self.set_status("Thinking...")
         self.send_button.config(state='disabled')
         self.input_entry.config(state='disabled')
-
-        # Run LLM/Agent interaction in a separate thread to avoid blocking UI
-        thread = threading.Thread(target=self.process_user_input, args=(user_input,))
-        thread.start()
+        threading.Thread(target=self.process_user_input, args=(user_input,)).start()
 
     def process_user_input(self, user_input):
-        """Processes user input using LLM or Agent in a background thread."""
         response_text = ""
         error_occurred = False
+        calendar_potentially_modified = False
         try:
             use_agent = self.use_tools_var.get()
-
             if use_agent and agent_executor:
-                # Use the agent executor
                 logging.info(f"Invoking Agent for input: {user_input}")
-                # The agent executor automatically uses and updates the memory
                 response = agent_executor.invoke({"input": user_input})
                 response_text = response.get('output', "Agent did not provide an output.")
-            else:
-                # Direct LLM call (without tools, but with memory)
+                # Check if calendar modifying tools were used
+                if response.get("intermediate_steps"):
+                    for step in response["intermediate_steps"]:
+                        action = step[0] # AIMessageChunk or similar, depending on agent
+                        if hasattr(action, 'tool') and action.tool in ["add_calendar_event", "delete_calendar_event"]: # Add other modifying tools here
+                             calendar_potentially_modified = True
+                             break
+                        # Fallback for some agent types if tool name is in log_to_str output
+                        if "tool='add_calendar_event'" in str(action) or "tool='delete_calendar_event'" in str(action):
+                            calendar_potentially_modified = True
+                            break
+
+
+            else: # Direct LLM call
                 logging.info(f"Invoking LLM directly for input: {user_input}")
                 current_history = memory.load_memory_variables({})['chat_history']
-                messages = [SystemMessage(content=f"You are '{HOST_NAME}', a helpful assistant for '{USER_NAME}'. Keep your answers concise and friendly.")] + current_history + [HumanMessage(content=user_input)]
-                response = llm.invoke(messages)
-                response_text = response.content
-                # Manually update memory for direct calls
+                messages = [SystemMessage(content=f"You are '{HOST_NAME}', a helpful assistant.")] + current_history + [HumanMessage(content=user_input)]
+                llm_response = llm.invoke(messages)
+                response_text = llm_response.content
                 memory.save_context({"input": user_input}, {"output": response_text})
-
         except Exception as e:
             logging.error(f"Error processing input: {e}", exc_info=True)
             response_text = f"Sorry, an error occurred: {e}"
             error_occurred = True
-            traceback.print_exc() # Print full traceback to console
+            traceback.print_exc()
+        
+        self.root.after(0, self.display_response_and_refresh, response_text, error_occurred, calendar_potentially_modified)
 
-        # Schedule UI update back on the main thread
-        self.root.after(0, self.display_response, response_text, error_occurred)
-
-
-    def display_response(self, response_text, error_occurred):
-        """Updates the UI with the assistant's response."""
+    def display_response_and_refresh(self, response_text, error_occurred, calendar_modified):
         self.add_message(HOST_NAME, response_text, tag='error' if error_occurred else 'assistant')
         self.set_status("Ready.")
         self.send_button.config(state='normal')
         self.input_entry.config(state='normal')
 
+        if calendar_modified:
+            logging.info("Calendar potentially modified by agent. Reloading data from DB and refreshing UI.")
+            self._load_calendar_events_from_db() # Reload global calendar_events from DB
+            self.refresh_calendar_display()      # Update UI from (now refreshed) global calendar_events
 
     def clear_chat(self):
-        """Clears the chat display and memory."""
         if messagebox.askyesno("Confirm Clear", "Are you sure you want to clear the chat history?"):
+            # ... (clear chat UI and memory - unchanged) ...
             self.chat_display.config(state='normal')
             self.chat_display.delete(1.0, tk.END)
             self.chat_display.config(state='disabled')
             self.chat_history.clear()
-            memory.clear() # Clear LangChain memory
+            memory.clear() 
             self.add_message("System", "Chat history cleared.", tag='system')
             self.set_status("Chat cleared.")
             logging.info("Chat history cleared.")
 
 
     def save_chat_history(self):
-        """Saves the displayed chat history to a text file."""
+        # ... (save chat history - unchanged) ...
         file_path = filedialog.asksaveasfilename(
             defaultextension=".txt",
             filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
             title="Save Chat History As..."
         )
-        if not file_path:
-            return # User cancelled
-
+        if not file_path: return
         try:
             with open(file_path, 'w', encoding='utf-8') as f:
-                # Get text directly from the widget to preserve formatting
                 history_text = self.chat_display.get(1.0, tk.END)
                 f.write(history_text)
             self.set_status(f"Chat history saved to {os.path.basename(file_path)}")
@@ -519,138 +484,100 @@ class VirtualAssistantApp:
             messagebox.showerror("Save Error", f"Failed to save chat history.\nError: {e}")
             logging.error(f"Failed to save chat history: {e}", exc_info=True)
 
-    def background_calendar_checker(self):
-        """Periodically checks for upcoming calendar events."""
-        logging.info("Background calendar checker started.")
-        # Give LLM time to initialize if needed
-        time.sleep(5)
 
-        # Create a separate LLM instance for this thread? Maybe not needed if stateless
-        # Or ensure thread-safe usage if shared
+    def background_calendar_checker(self):
+        logging.info("Background calendar checker started.")
+        time.sleep(5) 
         reminder_llm = ChatOpenAI(
             base_url=LOCAL_API_BASE, model=LOCAL_MODEL_NAME, api_key=DUMMY_API_KEY, temperature=0.1
         )
-
         while not self.calendar_thread_stop_event.is_set():
             try:
                 now = datetime.now()
                 reminder_time_limit = now + timedelta(minutes=CALENDAR_REMINDER_MINUTES)
                 events_to_remind = []
-
-                with calendar_lock:
-                    # Iterate safely over a copy or manage indices carefully if modifying
-                    current_calendar = list(calendar_events)
-                    for event in current_calendar:
-                        # Check if event is upcoming, within the window, and not already reminded
-                        if now <= event['datetime'] <= reminder_time_limit and event['id'] not in self.reminded_event_ids:
-                            events_to_remind.append(event)
-                            self.reminded_event_ids.add(event['id']) # Mark as reminded immediately
+                
+                with calendar_lock: # Protects access to shared calendar_events list
+                    # Iterate over a copy for safety if modifications were possible (not in this loop)
+                    current_calendar_copy = list(calendar_events) 
+                
+                for event in current_calendar_copy:
+                    if now <= event['datetime'] <= reminder_time_limit and event['id'] not in self.reminded_event_ids:
+                        events_to_remind.append(event)
+                        self.reminded_event_ids.add(event['id'])
 
                 for event in events_to_remind:
                     try:
                         logging.info(f"Generating reminder for event ID {event['id']}: {event['content']}")
                         reminder_prompt = (
-                            f"You are '{HOST_NAME}', '{USER_NAME}'s assistant. "
-                            f"Generate a brief, friendly reminder message for the user about their upcoming event. "
-                            f"Current time: {now.strftime('%I:%M %p')}. "
-                            f"Event details: '{event['content']}' scheduled for {event['datetime'].strftime('%I:%M %p on %A, %B %d')}."
-                             "Keep the message concise and start directly with the reminder (e.g., 'Just a reminder...')."
+                            f"You are '{HOST_NAME}', '{USER_NAME}'s assistant. Generate a brief, friendly reminder "
+                            f"for the user about their upcoming event: '{event['content']}' scheduled for "
+                            f"{event['datetime'].strftime('%I:%M %p on %A, %B %d')}. "
+                            f"Current time: {now.strftime('%I:%M %p')}. Keep it concise."
                         )
-                        # Use the separate LLM instance for the reminder
-                        messages = [SystemMessage(content=f"You are a helpful assistant named {HOST_NAME}."), HumanMessage(content=reminder_prompt)]
+                        messages = [SystemMessage(content=f"You are {HOST_NAME}."), HumanMessage(content=reminder_prompt)]
                         response = reminder_llm.invoke(messages)
                         reminder_message = response.content.strip()
-
-                        # Send message to main thread via queue
-                        self.message_queue.put({"sender": HOST_NAME, "message": reminder_message, "tag": "assistant"})
+                        self.message_queue.put({"sender": HOST_NAME, "message": reminder_message, "tag": "assistant", "event_id": event['id']})
                         logging.info(f"Reminder generated and queued for event ID {event['id']}")
-
                     except Exception as e:
                         logging.error(f"Error generating reminder for event ID {event['id']}: {e}", exc_info=True)
-                        # Optionally remove from reminded_event_ids if generation fails?
-                        # self.reminded_event_ids.discard(event['id'])
-
-
             except Exception as e:
                 logging.error(f"Error in background_calendar_checker loop: {e}", exc_info=True)
-
-            # Wait before next check
             self.calendar_thread_stop_event.wait(CALENDAR_CHECK_INTERVAL_SECONDS)
-
         logging.info("Background calendar checker stopped.")
 
-
     def check_message_queue(self):
-        """Checks the queue for messages from background threads and updates UI."""
         while not self.message_queue.empty():
             try:
                 msg_data = self.message_queue.get_nowait()
-                sender = msg_data.get("sender", "System")
-                message = msg_data.get("message", "")
-                tag = msg_data.get("tag", "system")
-                self.add_message(sender, message, tag=tag)
-                # Also add reminder to memory?
-                if tag == 'assistant' and sender == HOST_NAME: # Add reminders sent by assistant to memory
-                    memory.save_context({"input": f"[Reminder Sent for Event ID {msg_data.get('event_id', 'N/A')}]"}, {"output": message})
+                self.add_message(msg_data.get("sender", "System"), msg_data.get("message", ""), tag=msg_data.get("tag", "system"))
+                if msg_data.get("tag") == 'assistant' and msg_data.get("sender") == HOST_NAME:
+                    memory.save_context({"input": f"[Reminder Sent for Event ID {msg_data.get('event_id', 'N/A')}]"}, {"output": msg_data.get("message")})
             except Exception as e:
                 logging.error(f"Error processing message queue: {e}", exc_info=True)
-
-        # Schedule next check
         self.root.after(100, self.check_message_queue)
 
-
     def on_closing(self):
-        """Handles application closing."""
-        if messagebox.askokcancel("Quit", "Do you want to quit? Unsaved notes might be lost if not saved via the tool."):
+        if messagebox.askokcancel("Quit", "Do you want to quit?"):
             self.set_status("Shutting down...")
             logging.info("Shutdown requested.")
-            # Signal the calendar thread to stop
             self.calendar_thread_stop_event.set()
-            # Wait briefly for the thread to potentially finish its current loop
-            # self.calendar_thread.join(timeout=1.0) # Don't block UI for too long
-
-            # Save the vector store one last time
+            # self.calendar_thread.join(timeout=1.0) # Optional: wait for thread
             save_vector_store()
-
             self.root.destroy()
             logging.info("Application closed.")
+            
+    def manual_refresh_calendar(self):
+        """Manually triggers a reload from DB and UI refresh for the calendar."""
+        logging.info("Manual calendar refresh triggered.")
+        self.set_status("Refreshing calendar...")
+        self._load_calendar_events_from_db()
+        self.refresh_calendar_display()
+        self.set_status("Calendar refreshed.")
 
     def refresh_calendar_display(self):
-        """Updates the calendar display with upcoming events."""
         self.calendar_display.config(state='normal')
         self.calendar_display.delete(1.0, tk.END)
-        
         now = datetime.now()
-        end_time = now + timedelta(days=7)  # Show events for next 7 days
+        end_time_display_limit = now + timedelta(days=7) # Show events for next 7 days in UI
         
-        with calendar_lock:
-            # Filter and sort events by datetime
-            upcoming_events = [event for event in calendar_events if now <= event['datetime'] <= end_time]
-            upcoming_events.sort(key=lambda x: x['datetime'])  # Sort by datetime
-            
-            if not upcoming_events:
-                self.calendar_display.insert(tk.END, "No upcoming events in the next 7 days.")
-            else:
-                for event in upcoming_events:
-                    event_time = event['datetime'].strftime('%A, %B %d at %I:%M %p')
-                    self.calendar_display.insert(tk.END, f"• {event['content']}\n   {event_time}\n\n")
-        
-        self.calendar_display.config(state='disabled')
+        # The calendar_events list is now managed by _load_calendar_events_from_db
+        with calendar_lock: # Ensure thread-safe access if other threads might modify it (though unlikely here)
+            # Filter and sort directly from the already sorted calendar_events list
+            upcoming_display_events = [
+                event for event in calendar_events 
+                if now <= event['datetime'] <= end_time_display_limit
+            ]
+            # calendar_events is already sorted by datetime from _load_calendar_events_from_db
 
-    def add_calendar_event(self, event_content, event_datetime):
-        """Adds an event to the calendar and updates the display."""
-        with calendar_lock:
-            event_id = next_event_id
-            calendar_events.append({
-                'id': event_id,
-                'content': event_content,
-                'datetime': event_datetime
-            })
-            calendar_events.sort(key=lambda x: x['datetime'])
-            next_event_id += 1
-        
-        # Update the calendar display
-        self.refresh_calendar_display()
+        if not upcoming_display_events:
+            self.calendar_display.insert(tk.END, "No upcoming events in the next 7 days.")
+        else:
+            for event in upcoming_display_events:
+                event_time_str = event['datetime'].strftime('%a, %b %d at %I:%M %p') # Shortened format for UI
+                self.calendar_display.insert(tk.END, f"• {event['content']}\n   {event_time_str}\n\n")
+        self.calendar_display.config(state='disabled')
 
 # --- Main Execution ---
 if __name__ == "__main__":
