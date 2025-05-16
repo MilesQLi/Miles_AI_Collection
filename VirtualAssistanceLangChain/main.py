@@ -7,22 +7,26 @@ import threading
 import time
 from datetime import datetime, timedelta
 import dateparser # More robust parsing than dateutil.parser
-import json
-import os
-import yaml
+# import json # Not explicitly used, can be removed if truly unused
+# import os # Already imported
+import yaml # Not explicitly used, can be removed if truly unused
 import logging
 import traceback
 from queue import Queue # For thread-safe communication
 import sqlite3 # For persistent calendar
+import os # For FAISS path check
 
 # LangChain components
 from langchain_openai import ChatOpenAI
 from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain.memory import ConversationBufferWindowMemory
-from langchain.agents import AgentExecutor, create_openai_tools_agent, tool
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain.memory import ConversationBufferWindowMemory # Still used for direct LLM and reminders
+# from langchain.agents import AgentExecutor, create_openai_tools_agent, tool # create_openai_tools_agent and AgentExecutor removed
+from langchain.agents import tool # Keep @tool decorator
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.prebuilt import create_react_agent
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder # ChatPromptTemplate might not be directly used by new agent
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_experimental.tools import PythonREPLTool # Experimental but useful
 from langchain_core.pydantic_v1 import BaseModel, Field # Use v1 for compatibility if needed
@@ -80,9 +84,9 @@ try:
         base_url=LOCAL_API_BASE,
         model=LOCAL_MODEL_NAME,
         api_key=DUMMY_API_KEY,
-        stream=False,
+        # stream=False, # stream is deprecated, use streaming=False
         temperature=0.2,
-        streaming=False,
+        streaming=False, # Explicitly set streaming to False
     )
     logging.info(f"LLM initialized: Model={LOCAL_MODEL_NAME}, BaseURL={LOCAL_API_BASE}")
 except Exception as e:
@@ -96,7 +100,7 @@ try:
         model=EMBEDDING_MODEL_NAME,
         base_url=OLLAMA_BASE_URL
     )
-    _ = embeddings.embed_query("Test query")
+    _ = embeddings.embed_query("Test query") # Test embedding
     logging.info(f"Embeddings initialized: Model={EMBEDDING_MODEL_NAME}, BaseURL={OLLAMA_BASE_URL}")
 except Exception as e:
     logging.error(f"Failed to initialize Embeddings: {e}", exc_info=True)
@@ -132,7 +136,7 @@ def save_vector_store():
         except Exception as e:
             logging.error(f"Failed to save FAISS index: {e}", exc_info=True)
 
-# 4. Memory
+# 4. Memory (For direct LLM calls and reminders, not for LangGraph agent primarily)
 memory = ConversationBufferWindowMemory(
     k=5, memory_key="chat_history", return_messages=True
 )
@@ -177,7 +181,7 @@ def retrieve_notes_from_vector_store(query: str) -> str:
 
 class CalendarEventInput(BaseModel):
     event_content: str = Field(..., description="The description or title of the calendar event.")
-    event_datetime_str: str = Field(..., description="The date and time of the event (e.g., 'tomorrow at 3 pm').")
+    event_datetime_str: str = Field(..., description="The date and time of the event (e.g., 'tomorrow at 3 pm', 'next Friday at 10am'). Should be a specific, parsable date and time.")
 
 @tool("add_calendar_event", args_schema=CalendarEventInput)
 def add_calendar_event(event_content: str, event_datetime_str: str) -> str:
@@ -185,7 +189,7 @@ def add_calendar_event(event_content: str, event_datetime_str: str) -> str:
     try:
         event_dt = dateparser.parse(event_datetime_str, settings={'PREFER_DATES_FROM': 'future', 'RETURN_AS_TIMEZONE_AWARE': False})
         if not event_dt:
-            return f"Error: Could not understand the date/time '{event_datetime_str}'. Please specify a clearer date and time."
+            return f"Error: Could not understand the date/time '{event_datetime_str}'. Please specify a clearer date and time (e.g., 'tomorrow at 3 pm', 'July 10th 2pm')."
 
         conn = _get_db_connection()
         cursor = conn.cursor()
@@ -194,7 +198,9 @@ def add_calendar_event(event_content: str, event_datetime_str: str) -> str:
         new_event_id = cursor.lastrowid
         conn.commit()
         logging.info(f"DB: Added calendar event ID {new_event_id}: '{event_content}' at {event_dt_iso}")
-        return f"OK. I've added '{event_content}' to your calendar for {event_dt.strftime('%A, %B %d, %Y at %I:%M %p')} (ID: {new_event_id}). Your calendar view should update shortly."
+        # Inform the GUI thread to refresh calendar by calling a method or using the queue
+        # For now, the response will trigger a refresh if calendar_potentially_modified is true
+        return f"OK. I've added '{event_content}' to your calendar for {event_dt.strftime('%A, %B %d, %Y at %I:%M %p')} (ID: {new_event_id}). Your calendar view should update shortly if the agent indicates a change."
     except Exception as e:
         logging.error(f"Error in add_calendar_event tool: {e}", exc_info=True)
         return f"Error: Could not add calendar event to database. Details: {e}"
@@ -204,32 +210,38 @@ def add_calendar_event(event_content: str, event_datetime_str: str) -> str:
 
 
 class CalendarRetrieveInput(BaseModel):
-    start_datetime_str: str = Field(..., description="The start date/time for retrieving events (e.g., 'today').")
-    end_datetime_str: str = Field(..., description="The end date/time for retrieving events (e.g., 'end of today').")
+    start_datetime_str: str = Field(..., description="The start date/time for retrieving events (e.g., 'today', 'next Monday').")
+    end_datetime_str: str = Field(..., description="The end date/time for retrieving events (e.g., 'end of today', 'next Friday').")
 
 @tool("retrieve_calendar_events", args_schema=CalendarRetrieveInput)
 def retrieve_calendar_events(start_datetime_str: str, end_datetime_str: str) -> str:
     """Retrieves events from the user's calendar within a specified date/time range from persistent storage."""
     try:
-        start_dt = dateparser.parse(start_datetime_str, settings={'PREFER_DATES_FROM': 'future', 'RETURN_AS_TIMEZONE_AWARE': False})
-        end_dt = dateparser.parse(end_datetime_str, settings={'PREFER_DATES_FROM': 'future', 'RETURN_AS_TIMEZONE_AWARE': False})
+        start_dt = dateparser.parse(start_datetime_str, settings={'PREFER_DATES_FROM': 'current_period', 'RETURN_AS_TIMEZONE_AWARE': False})
+        end_dt = dateparser.parse(end_datetime_str, settings={'PREFER_DATES_FROM': 'current_period', 'RETURN_AS_TIMEZONE_AWARE': False})
 
-        if not start_dt or not end_dt:
-            return "Error: Could not understand the date range."
-        if start_dt > end_dt:
-            end_dt = start_dt.replace(hour=23, minute=59, second=59) # Default to end of start day
+
+        if not start_dt:
+            return f"Error: Could not understand the start date/time '{start_datetime_str}'."
+        if not end_dt:
+             return f"Error: Could not understand the end date/time '{end_datetime_str}'."
+
+        if start_dt > end_dt: # If range is inverted, assume user means from start_dt to end of that day
+            end_dt = start_dt.replace(hour=23, minute=59, second=59)
+            logging.info(f"End date was before start date for calendar retrieval. Adjusted end date to end of start day: {end_dt.isoformat()}")
+
 
         conn = _get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT content, event_datetime FROM events WHERE event_datetime BETWEEN ? AND ? ORDER BY event_datetime ASC",
+            "SELECT id, content, event_datetime FROM events WHERE event_datetime BETWEEN ? AND ? ORDER BY event_datetime ASC",
             (start_dt.isoformat(), end_dt.isoformat())
         )
         db_events = cursor.fetchall()
         conn.close()
 
         found_events = [
-            f"- {row[0]} on {datetime.fromisoformat(row[1]).strftime('%A, %B %d at %I:%M %p')}"
+            f"- (ID: {row[0]}) {row[1]} on {datetime.fromisoformat(row[2]).strftime('%A, %B %d at %I:%M %p')}"
             for row in db_events
         ]
         
@@ -250,24 +262,37 @@ tools = [
     add_calendar_event, retrieve_calendar_events,
 ]
 
-agent_prompt = ChatPromptTemplate.from_messages([
-    ("system", f"You are '{HOST_NAME}', a helpful personal assistant for '{USER_NAME}'. The current time is {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}. Use tools when necessary."),
-    MessagesPlaceholder(variable_name="chat_history"),
-    ("human", "{input}"),
-    MessagesPlaceholder(variable_name="agent_scratchpad"),
-])
+# System prompt text for LangGraph ReAct Agent
+# The original agent_prompt is not directly used in the same way.
+SYSTEM_PROMPT_TEXT = (
+    f"You are '{HOST_NAME}', a helpful personal assistant for '{USER_NAME}'. "
+    f"The current time is {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}. "
+    f"You have access to the following tools: {[tool.name for tool in tools]}. "
+    "Use tools when necessary to answer the user's request or perform actions. "
+    "Previous conversation history will be part of the messages you receive. "
+    "When asked to add a calendar event, ensure you get a specific date and time from the user if it's ambiguous. "
+    "If a date/time is ambiguous for adding an event, ask for clarification before calling the add_calendar_event tool."
+)
+
+checkpointer = None
+langgraph_agent_app = None
+LANGGRAPH_THREAD_ID = "main_assistant_chat_session" # Define a consistent thread ID
 
 try:
-    agent = create_openai_tools_agent(llm, tools, agent_prompt)
-    agent_executor = AgentExecutor(
-        agent=agent, tools=tools, memory=memory, verbose=True,
-        handle_parsing_errors=True, max_iterations=10,
+    checkpointer = MemorySaver()
+    # Create the LangGraph ReAct agent
+    langgraph_agent_app = create_react_agent(
+        llm,
+        tools=tools,
+        checkpointer=checkpointer
+        # create_react_agent typically infers prompt structure for ReAct.
+        # The system message is usually passed as the first message in a new thread.
     )
-    logging.info("Agent Executor created successfully.")
+    logging.info("LangGraph ReAct Agent created successfully.")
 except Exception as e:
-    logging.error(f"Failed to create Agent Executor: {e}", exc_info=True)
-    messagebox.showerror("Agent Error", f"Could not create LangChain agent.\nError: {e}")
-    agent_executor = None
+    logging.error(f"Failed to create LangGraph ReAct Agent: {e}", exc_info=True)
+    messagebox.showerror("Agent Error", f"Could not create LangGraph agent.\nError: {e}")
+    # langgraph_agent_app will remain None, handled in process_user_input
 
 
 # --- Tkinter Application ---
@@ -277,13 +302,12 @@ class VirtualAssistantApp:
         self.root.title(f"{USER_NAME}'s Personal Assistant ({HOST_NAME})")
         self.root.geometry("1024x600")
 
-        self.chat_history = []
+        self.chat_history = [] # For UI display primarily
         self.reminded_event_ids = set()
         self.message_queue = Queue()
 
         # Menu Bar
         self.menu_bar = tk.Menu(self.root)
-        # ... (menu setup - unchanged) ...
         self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.file_menu.add_command(label="Clear Chat", command=self.clear_chat)
         self.file_menu.add_command(label="Save Chat History", command=self.save_chat_history)
@@ -309,9 +333,9 @@ class VirtualAssistantApp:
         self.calendar_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 0))
         self.calendar_frame.pack_propagate(False)
         
-        self.calendar_header = tk.Label(self.calendar_frame, text="Upcoming Events", font=('Arial', 10, 'bold'))
+        self.calendar_header = tk.Label(self.calendar_frame, text="Upcoming Events (Next 7 Days)", font=('Arial', 10, 'bold'))
         self.calendar_header.pack(pady=5)
-        self.calendar_display = scrolledtext.ScrolledText(self.calendar_frame, wrap=tk.WORD, width=35, state='disabled') # Adjusted width
+        self.calendar_display = scrolledtext.ScrolledText(self.calendar_frame, wrap=tk.WORD, width=35, state='disabled')
         self.calendar_display.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.refresh_calendar_btn = tk.Button(self.calendar_frame, text="Refresh Calendar", command=self.manual_refresh_calendar)
         self.refresh_calendar_btn.pack(pady=5)
@@ -337,22 +361,22 @@ class VirtualAssistantApp:
         self.set_status("Ready.")
 
         # --- Initialization ---
-        init_calendar_db() # Ensure DB and table exist
+        init_calendar_db()
         load_vector_store()
-        self._load_calendar_events_from_db() # Load calendar from DB into memory
+        self._load_calendar_events_from_db()
 
         self.add_message("System", f"Assistant initialized. Type 'clear' to reset chat. Current time: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n", tag='system')
         
         self.calendar_thread_stop_event = threading.Event()
         self.calendar_thread = threading.Thread(target=self.background_calendar_checker, daemon=True)
         self.calendar_thread.start()
-        self.refresh_calendar_display() # Initial display
+        self.refresh_calendar_display()
 
         self.root.after(100, self.check_message_queue)
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def _load_calendar_events_from_db(self):
-        global calendar_events, next_event_id # next_event_id is less critical now
+        global calendar_events, next_event_id
         max_id_found = 0
         try:
             conn = _get_db_connection()
@@ -362,21 +386,27 @@ class VirtualAssistantApp:
             conn.close()
 
             with calendar_lock:
-                calendar_events.clear() # Clear existing in-memory events
+                calendar_events.clear()
                 for row in db_rows:
                     event_id, content, dt_str = row
-                    calendar_events.append({
-                        'id': event_id,
-                        'content': content,
-                        'datetime': datetime.fromisoformat(dt_str)
-                    })
-                    if event_id > max_id_found:
-                        max_id_found = event_id
+                    try:
+                        event_datetime_obj = datetime.fromisoformat(dt_str)
+                        calendar_events.append({
+                            'id': event_id,
+                            'content': content,
+                            'datetime': event_datetime_obj
+                        })
+                        if event_id > max_id_found:
+                            max_id_found = event_id
+                    except ValueError as ve:
+                        logging.error(f"Could not parse datetime string '{dt_str}' for event ID {event_id}: {ve}")
+
                 next_event_id = max_id_found + 1
             logging.info(f"Loaded {len(calendar_events)} events from DB into memory. Next event ID calculated as {next_event_id}.")
         except Exception as e:
             logging.error(f"Error loading calendar events from DB: {e}", exc_info=True)
             messagebox.showerror("Calendar DB Error", f"Could not load calendar events from database.\nError: {e}")
+        # self.refresh_calendar_display() # Refresh after loading - called in init already
 
     def set_status(self, text):
         self.status_var.set(text)
@@ -410,36 +440,68 @@ class VirtualAssistantApp:
         calendar_potentially_modified = False
         try:
             use_agent = self.use_tools_var.get()
-            if use_agent and agent_executor:
-                logging.info(f"Invoking Agent for input: {user_input}")
-                response = agent_executor.invoke({"input": user_input})
-                response_text = response.get('output', "Agent did not provide an output.")
-                # Check if calendar modifying tools were used
-                if response.get("intermediate_steps"):
-                    for step in response["intermediate_steps"]:
-                        action = step[0] # AIMessageChunk or similar, depending on agent
-                        if hasattr(action, 'tool') and action.tool in ["add_calendar_event", "delete_calendar_event"]: # Add other modifying tools here
-                             calendar_potentially_modified = True
-                             break
-                        # Fallback for some agent types if tool name is in log_to_str output
-                        if "tool='add_calendar_event'" in str(action) or "tool='delete_calendar_event'" in str(action):
-                            calendar_potentially_modified = True
-                            break
+            if use_agent and langgraph_agent_app and checkpointer: # Check for langgraph_agent_app and checkpointer
+                logging.info(f"Invoking LangGraph ReAct Agent for input: {user_input}")
+                
+                thread_config = {"configurable": {"thread_id": LANGGRAPH_THREAD_ID}}
+                
+                # Construct messages for LangGraph agent
+                # Check if this is the first message in the thread to prepend system prompt
+                current_graph_state = checkpointer.get(thread_config)
+                
+                messages_for_graph = []
+                if not current_graph_state or not current_graph_state.get("messages"):
+                    # No history for this thread_id in checkpointer, so add SystemMessage
+                    messages_for_graph.append(SystemMessage(content=SYSTEM_PROMPT_TEXT))
+                
+                messages_for_graph.append(HumanMessage(content=user_input))
+                
+                inputs = {"messages": messages_for_graph}
+                
+                # Invoke the LangGraph agent
+                # The stream method can be used for intermediate steps, invoke for final answer
+                full_graph_response = langgraph_agent_app.invoke(inputs, config=thread_config)
+                
+                # Extract the final AI response
+                final_messages = full_graph_response.get('messages', [])
+                if final_messages and isinstance(final_messages[-1], AIMessage):
+                    response_text = final_messages[-1].content
+                else:
+                    response_text = "LangGraph agent did not provide a final AIMessage."
+                    logging.warning(f"Unexpected LangGraph response structure: {full_graph_response}")
 
+                # Check for tool usage that modified the calendar
+                for msg in final_messages:
+                    # AIMessage with tool_calls means the LLM decided to call a tool
+                    if isinstance(msg, AIMessage) and msg.tool_calls:
+                        for tc in msg.tool_calls:
+                            # tc is a dict: {'name': 'tool_name', 'args': {...}, 'id': '...'}
+                            if tc.get('name') in ["add_calendar_event", "delete_calendar_event", "update_calendar_event"]: # Add other relevant tool names
+                                calendar_potentially_modified = True
+                                logging.info(f"Calendar modifying tool '{tc.get('name')}' detected in agent response.")
+                                break
+                    if calendar_potentially_modified:
+                        break
+                # The ConversationBufferWindowMemory (`memory`) is not updated here, as LangGraph uses checkpointer.
 
-            else: # Direct LLM call
-                logging.info(f"Invoking LLM directly for input: {user_input}")
+            else: # Direct LLM call (if tools disabled or LangGraph agent failed to init)
+                logging.info(f"Invoking LLM directly for input: {user_input} (Tools disabled: {not use_agent}, Agent not init: {not langgraph_agent_app})")
                 current_history = memory.load_memory_variables({})['chat_history']
-                messages = [SystemMessage(content=f"You are '{HOST_NAME}', a helpful assistant.")] + current_history + [HumanMessage(content=user_input)]
+                # Use a simple system message for direct calls
+                direct_system_msg = SystemMessage(content=f"You are '{HOST_NAME}', a helpful assistant for '{USER_NAME}'. The current time is {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}. Please respond directly to the user.")
+                messages = [direct_system_msg] + current_history + [HumanMessage(content=user_input)]
+                
                 llm_response = llm.invoke(messages)
                 response_text = llm_response.content
+                # Save to the separate ConversationBufferWindowMemory
                 memory.save_context({"input": user_input}, {"output": response_text})
         except Exception as e:
             logging.error(f"Error processing input: {e}", exc_info=True)
             response_text = f"Sorry, an error occurred: {e}"
             error_occurred = True
-            traceback.print_exc()
+            traceback.print_exc() # For console debugging
         
+        # Schedule UI update on the main thread
         self.root.after(0, self.display_response_and_refresh, response_text, error_occurred, calendar_potentially_modified)
 
     def display_response_and_refresh(self, response_text, error_occurred, calendar_modified):
@@ -455,19 +517,36 @@ class VirtualAssistantApp:
 
     def clear_chat(self):
         if messagebox.askyesno("Confirm Clear", "Are you sure you want to clear the chat history?"):
-            # ... (clear chat UI and memory - unchanged) ...
             self.chat_display.config(state='normal')
             self.chat_display.delete(1.0, tk.END)
             self.chat_display.config(state='disabled')
-            self.chat_history.clear()
+            self.chat_history.clear() # UI history
+            
+            # Clear LangChain ConversationBufferWindowMemory (for direct LLM calls & reminders)
             memory.clear() 
+            
+            # Clear LangGraph agent's memory from the checkpointer
+            if checkpointer and isinstance(checkpointer, MemorySaver):
+                thread_config = {"configurable": {"thread_id": LANGGRAPH_THREAD_ID}}
+                # For MemorySaver, we can try to remove the thread_id entry from its internal storage
+                if LANGGRAPH_THREAD_ID in checkpointer.storage:
+                    try:
+                        del checkpointer.storage[LANGGRAPH_THREAD_ID]
+                        logging.info(f"Cleared LangGraph agent state for thread '{LANGGRAPH_THREAD_ID}' from MemorySaver.")
+                    except Exception as e:
+                        logging.error(f"Could not directly delete thread '{LANGGRAPH_THREAD_ID}' from MemorySaver: {e}")
+                else:
+                    logging.info(f"No state found for thread '{LANGGRAPH_THREAD_ID}' in MemorySaver to clear.")
+            elif checkpointer:
+                 logging.warning("Checkpointer is not MemorySaver, manual clearing of thread state might be needed or not supported directly.")
+
+
             self.add_message("System", "Chat history cleared.", tag='system')
             self.set_status("Chat cleared.")
-            logging.info("Chat history cleared.")
+            logging.info("Chat history cleared (UI, buffer memory, and attempted LangGraph agent state).")
 
 
     def save_chat_history(self):
-        # ... (save chat history - unchanged) ...
         file_path = filedialog.asksaveasfilename(
             defaultextension=".txt",
             filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
@@ -487,24 +566,31 @@ class VirtualAssistantApp:
 
     def background_calendar_checker(self):
         logging.info("Background calendar checker started.")
-        time.sleep(5) 
-        reminder_llm = ChatOpenAI(
-            base_url=LOCAL_API_BASE, model=LOCAL_MODEL_NAME, api_key=DUMMY_API_KEY, temperature=0.1
-        )
+        time.sleep(5) # Initial delay
+        try:
+            reminder_llm = ChatOpenAI(
+                base_url=LOCAL_API_BASE, model=LOCAL_MODEL_NAME, api_key=DUMMY_API_KEY, temperature=0.1, streaming=False
+            )
+        except Exception as e:
+            logging.error(f"Failed to initialize reminder_llm in background thread: {e}", exc_info=True)
+            # Potentially post a message to UI or stop thread
+            self.message_queue.put({"sender": "System", "message": "Error: Calendar reminder LLM failed to init.", "tag": "error"})
+            return
+
         while not self.calendar_thread_stop_event.is_set():
             try:
                 now = datetime.now()
                 reminder_time_limit = now + timedelta(minutes=CALENDAR_REMINDER_MINUTES)
                 events_to_remind = []
                 
-                with calendar_lock: # Protects access to shared calendar_events list
-                    # Iterate over a copy for safety if modifications were possible (not in this loop)
+                with calendar_lock: 
                     current_calendar_copy = list(calendar_events) 
                 
                 for event in current_calendar_copy:
                     if now <= event['datetime'] <= reminder_time_limit and event['id'] not in self.reminded_event_ids:
                         events_to_remind.append(event)
-                        self.reminded_event_ids.add(event['id'])
+                        # Mark as reminded immediately to avoid race conditions if generation is slow
+                        self.reminded_event_ids.add(event['id']) 
 
                 for event in events_to_remind:
                     try:
@@ -513,7 +599,7 @@ class VirtualAssistantApp:
                             f"You are '{HOST_NAME}', '{USER_NAME}'s assistant. Generate a brief, friendly reminder "
                             f"for the user about their upcoming event: '{event['content']}' scheduled for "
                             f"{event['datetime'].strftime('%I:%M %p on %A, %B %d')}. "
-                            f"Current time: {now.strftime('%I:%M %p')}. Keep it concise."
+                            f"The current time is {now.strftime('%I:%M %p')}. Keep it concise and natural."
                         )
                         messages = [SystemMessage(content=f"You are {HOST_NAME}."), HumanMessage(content=reminder_prompt)]
                         response = reminder_llm.invoke(messages)
@@ -522,8 +608,12 @@ class VirtualAssistantApp:
                         logging.info(f"Reminder generated and queued for event ID {event['id']}")
                     except Exception as e:
                         logging.error(f"Error generating reminder for event ID {event['id']}: {e}", exc_info=True)
+                        # If reminder failed, potentially allow it to be reminded again later by removing from reminded_event_ids
+                        # self.reminded_event_ids.discard(event['id']) # Or handle based on error type
             except Exception as e:
                 logging.error(f"Error in background_calendar_checker loop: {e}", exc_info=True)
+            
+            # Wait for the specified interval or until the stop event is set
             self.calendar_thread_stop_event.wait(CALENDAR_CHECK_INTERVAL_SECONDS)
         logging.info("Background calendar checker stopped.")
 
@@ -532,8 +622,10 @@ class VirtualAssistantApp:
             try:
                 msg_data = self.message_queue.get_nowait()
                 self.add_message(msg_data.get("sender", "System"), msg_data.get("message", ""), tag=msg_data.get("tag", "system"))
+                # If the reminder is from the assistant, add it to the (direct LLM) memory for context if tools are then disabled.
+                # Note: This does NOT add it to the LangGraph agent's checkpointer memory.
                 if msg_data.get("tag") == 'assistant' and msg_data.get("sender") == HOST_NAME:
-                    memory.save_context({"input": f"[Reminder Sent for Event ID {msg_data.get('event_id', 'N/A')}]"}, {"output": msg_data.get("message")})
+                    memory.save_context({"input": f"[Reminder Sent for Event ID {msg_data.get('event_id', 'N/A')}: {msg_data.get('message')}]"}, {"output": ""}) # Log reminder as user input, assistant output is implicit
             except Exception as e:
                 logging.error(f"Error processing message queue: {e}", exc_info=True)
         self.root.after(100, self.check_message_queue)
@@ -543,13 +635,14 @@ class VirtualAssistantApp:
             self.set_status("Shutting down...")
             logging.info("Shutdown requested.")
             self.calendar_thread_stop_event.set()
-            # self.calendar_thread.join(timeout=1.0) # Optional: wait for thread
+            # Join can be added here if essential, but daemon thread will exit with main.
+            # If self.calendar_thread.is_alive():
+            #    self.calendar_thread.join(timeout=2.0) 
             save_vector_store()
             self.root.destroy()
             logging.info("Application closed.")
             
     def manual_refresh_calendar(self):
-        """Manually triggers a reload from DB and UI refresh for the calendar."""
         logging.info("Manual calendar refresh triggered.")
         self.set_status("Refreshing calendar...")
         self._load_calendar_events_from_db()
@@ -560,22 +653,29 @@ class VirtualAssistantApp:
         self.calendar_display.config(state='normal')
         self.calendar_display.delete(1.0, tk.END)
         now = datetime.now()
-        end_time_display_limit = now + timedelta(days=7) # Show events for next 7 days in UI
+        # Display events for the next 7 days in the UI
+        end_time_display_limit = now + timedelta(days=7) 
         
-        # The calendar_events list is now managed by _load_calendar_events_from_db
-        with calendar_lock: # Ensure thread-safe access if other threads might modify it (though unlikely here)
-            # Filter and sort directly from the already sorted calendar_events list
-            upcoming_display_events = [
-                event for event in calendar_events 
-                if now <= event['datetime'] <= end_time_display_limit
-            ]
-            # calendar_events is already sorted by datetime from _load_calendar_events_from_db
+        upcoming_display_events_ui = []
+        with calendar_lock: 
+            # Filter and sort directly from the already sorted calendar_events list for UI
+            # Ensure event['datetime'] is actually a datetime object
+            for event in calendar_events:
+                if isinstance(event['datetime'], datetime):
+                    if now <= event['datetime'] <= end_time_display_limit:
+                        upcoming_display_events_ui.append(event)
+                else:
+                    logging.warning(f"Event ID {event.get('id')} has non-datetime object: {event['datetime']}")
+        
+        # Sort again just to be absolutely sure for display, if needed (should be sorted from DB load)
+        # upcoming_display_events_ui.sort(key=lambda x: x['datetime'])
 
-        if not upcoming_display_events:
+
+        if not upcoming_display_events_ui:
             self.calendar_display.insert(tk.END, "No upcoming events in the next 7 days.")
         else:
-            for event in upcoming_display_events:
-                event_time_str = event['datetime'].strftime('%a, %b %d at %I:%M %p') # Shortened format for UI
+            for event in upcoming_display_events_ui:
+                event_time_str = event['datetime'].strftime('%a, %b %d at %I:%M %p')
                 self.calendar_display.insert(tk.END, f"• {event['content']}\n   {event_time_str}\n\n")
         self.calendar_display.config(state='disabled')
 
