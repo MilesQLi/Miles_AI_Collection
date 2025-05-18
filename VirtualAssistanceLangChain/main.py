@@ -84,7 +84,6 @@ try:
         base_url=LOCAL_API_BASE,
         model=LOCAL_MODEL_NAME,
         api_key=DUMMY_API_KEY,
-        # stream=False, # stream is deprecated, use streaming=False
         temperature=0.2,
         streaming=False, # Explicitly set streaming to False
     )
@@ -265,13 +264,7 @@ tools = [
 # System prompt text for LangGraph ReAct Agent
 # The original agent_prompt is not directly used in the same way.
 SYSTEM_PROMPT_TEXT = (
-    f"You are '{HOST_NAME}', a helpful personal assistant for '{USER_NAME}'. "
-    f"The current time is {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}. "
-    f"You have access to the following tools: {[tool.name for tool in tools]}. "
-    "Use tools when necessary to answer the user's request or perform actions. "
-    "Previous conversation history will be part of the messages you receive. "
-    "When asked to add a calendar event, ensure you get a specific date and time from the user if it's ambiguous. "
-    "If a date/time is ambiguous for adding an event, ask for clarification before calling the add_calendar_event tool."
+    f"You are '{HOST_NAME}', a helpful personal assistant for '{USER_NAME}'. The current time is {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}. Use tools when necessary."
 )
 
 checkpointer = None
