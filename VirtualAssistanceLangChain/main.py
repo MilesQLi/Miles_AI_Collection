@@ -451,6 +451,9 @@ class VirtualAssistantApp:
                 
                 inputs = {"messages": messages_for_graph}
                 
+                # Get current message count before invoking agent
+                current_message_count = len(current_graph_state.get('channel_values',{}).get("messages", [])) if current_graph_state else 0
+                
                 # Invoke the LangGraph agent
                 # The stream method can be used for intermediate steps, invoke for final answer
                 full_graph_response = langgraph_agent_app.invoke(inputs, config=thread_config)
@@ -463,8 +466,8 @@ class VirtualAssistantApp:
                     response_text = "LangGraph agent did not provide a final AIMessage."
                     logging.warning(f"Unexpected LangGraph response structure: {full_graph_response}")
 
-                # Check for tool usage that modified the calendar
-                for msg in final_messages:
+                # Check for tool usage that modified the calendar - only in new messages
+                for msg in final_messages[current_message_count:]:
                     # AIMessage with tool_calls means the LLM decided to call a tool
                     if isinstance(msg, AIMessage) and msg.tool_calls:
                         for tc in msg.tool_calls:
