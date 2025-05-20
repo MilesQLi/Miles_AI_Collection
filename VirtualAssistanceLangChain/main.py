@@ -33,7 +33,7 @@ from langchain_core.pydantic_v1 import BaseModel, Field # Use v1 for compatibili
 
 # --- Configuration ---
 # User and Host (from original config)
-USER_NAME = "User" # Replace with your desired user name
+USER_NAME = "Miles" # Replace with your desired user name
 HOST_NAME = "Assistant" # Replace with your desired assistant name
 
 # LLM Configuration
@@ -335,7 +335,7 @@ class VirtualAssistantApp:
 
         self.chat_display = scrolledtext.ScrolledText(self.chat_frame, wrap=tk.WORD, state='disabled')
         self.chat_display.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-        self.chat_display.tag_configure('user', foreground='blue', font=('Arial', 10, 'bold'))
+        self.chat_display.tag_configure(USER_NAME, foreground='blue', font=('Arial', 10, 'bold'))
         self.chat_display.tag_configure('assistant', foreground='green', font=('Arial', 10))
         self.chat_display.tag_configure('system', foreground='gray', font=('Arial', 9, 'italic'))
         self.chat_display.tag_configure('error', foreground='red', font=('Arial', 10, 'bold'))
@@ -408,7 +408,7 @@ class VirtualAssistantApp:
     def add_message(self, sender, message, tag='assistant'):
         self.chat_display.config(state='normal')
         if self.chat_history: self.chat_display.insert(tk.END, "\n")
-        self.chat_display.insert(tk.END, f"{sender}: ", ('user' if tag == 'user' else tag,))
+        self.chat_display.insert(tk.END, f"{sender}: ", (USER_NAME if tag == 'user' else tag,))
         self.chat_display.insert(tk.END, message, (tag,))
         self.chat_display.config(state='disabled')
         self.chat_display.see(tk.END)
@@ -418,7 +418,7 @@ class VirtualAssistantApp:
         user_input = self.input_entry.get().strip()
         if not user_input: return
         self.input_entry.delete(0, tk.END)
-        self.add_message(USER_NAME, user_input, tag='user')
+        self.add_message(USER_NAME, user_input, tag=USER_NAME)
         if user_input.lower() == 'clear':
             self.clear_chat()
             return
