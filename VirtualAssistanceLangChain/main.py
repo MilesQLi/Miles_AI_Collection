@@ -326,7 +326,7 @@ class VirtualAssistantApp:
         self.calendar_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 0))
         self.calendar_frame.pack_propagate(False)
         
-        self.calendar_header = tk.Label(self.calendar_frame, text="Upcoming Events (Next 7 Days)", font=('Arial', 10, 'bold'))
+        self.calendar_header = tk.Label(self.calendar_frame, text="Upcoming Events (Next 30 Days)", font=('Arial', 10, 'bold'))
         self.calendar_header.pack(pady=5)
         self.calendar_display = scrolledtext.ScrolledText(self.calendar_frame, wrap=tk.WORD, width=35, state='disabled')
         self.calendar_display.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -649,8 +649,8 @@ class VirtualAssistantApp:
         self.calendar_display.config(state='normal')
         self.calendar_display.delete(1.0, tk.END)
         now = datetime.now()
-        # Display events for the next 7 days in the UI
-        end_time_display_limit = now + timedelta(days=7) 
+        # Display events for the next 30 days in the UI
+        end_time_display_limit = now + timedelta(days=30) 
         
         upcoming_display_events_ui = []
         with calendar_lock: 
