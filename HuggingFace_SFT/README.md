@@ -10,6 +10,17 @@ This script allows you to conduct distributed fine-tuning of language models usi
 - TRL
 - Datasets
 - PyYAML
+- Accelerate
+
+## Setup
+
+Before running the training script, you should configure the Accelerate environment. This sets up the distributed training arguments and hardware configuration. Run the following command and follow the prompts:
+
+```bash
+accelerate config
+```
+
+This only needs to be done once per environment or whenever you want to change your distributed training setup.
 
 ## Configuration
 
