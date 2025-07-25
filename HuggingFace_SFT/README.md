@@ -13,7 +13,7 @@ This script allows you to conduct distributed fine-tuning of language models usi
 
 ## Configuration
 
-The script uses a YAML configuration file to set all parameters. A default configuration file (`default_config.yaml`) is provided with the current values.
+The script uses a YAML configuration file to set all parameters. A default configuration file (`default_train_config.yaml`) is provided with the current values.
 
 ### Configuration Structure
 
@@ -38,12 +38,12 @@ The YAML file has three main sections:
 Run the script with:
 
 ```bash
-accelerate  --config_file ./default_config.yaml sft.py --config path/to/your/config.yaml
+accelerate launch sft.py --config default_train_config.yaml
 ```
 
 
 
-If no config file is specified, it will use `default_config.yaml` by default.
+If no config file is specified, it will use `default_train_config.yaml` by default.
 
 ## Customizing the Configuration
 

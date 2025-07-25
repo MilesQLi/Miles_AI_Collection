@@ -18,7 +18,7 @@ class AICompletionApp:
         self.completion_delay = tk.IntVar(value=3)  # seconds
         self.num_tokens = tk.IntVar(value=20)
         self.api_type = tk.StringVar(value="openai")  # "openai" or "ollama"
-        self.api_url = tk.StringVar(value="http://127.0.0.1:5000/v1/completions")  # Default for OpenAI
+        self.api_url = tk.StringVar(value="http://127.0.0.1:1234/v1/completions")  # Default for OpenAI
         self.api_key = tk.StringVar()
         self.model = tk.StringVar(value="phi4:14b-q8_0")
 
@@ -97,7 +97,7 @@ class AICompletionApp:
                 with open(config_file, 'r') as f:
                     config = json.load(f)
                 self.api_type.set(config.get("api_type", "openai"))
-                self.api_url.set(config.get("api_url", "http://127.0.0.1:5000/v1/completions"))
+                self.api_url.set(config.get("api_url", "http://127.0.0.1:1234/v1/completions"))
                 self.api_key.set(config.get("api_key", ""))
                 self.model.set(config.get("model", "llama2"))
                 self.completion_delay.set(config.get("delay", 3))
@@ -293,7 +293,7 @@ class AICompletionApp:
             }
             
             response = requests.post(
-                self.api_url.get() or "http://127.0.0.1:5000/v1/completions",
+                self.api_url.get() or "http://127.0.0.1:1234/v1/completions",
                 headers=headers,
                 json=data,
                 timeout=30
@@ -395,7 +395,7 @@ class AICompletionApp:
         
         def update_api_url(*args):
             if self.api_type.get() == "openai":
-                self.api_url.set("http://127.0.0.1:5000/v1/completions")
+                self.api_url.set("http://127.0.0.1:1234/v1/completions")
             else:  # ollama
                 self.api_url.set("http://localhost:11434/api/generate")
         
@@ -435,7 +435,7 @@ class AICompletionApp:
         ).grid(row=6, column=0, columnspan=2, sticky=tk.W, pady=10)
         
         # Info text
-        info_text = ("For OpenAI: Default URL is http://127.0.0.1:5000/v1/completions\n"
+        info_text = ("For OpenAI: Default URL is http://127.0.0.1:1234/v1/completions\n"
                      "For Ollama: Default URL is http://localhost:11434/api/generate")
         ttk.Label(settings_frame, text=info_text, wraplength=380).grid(row=7, column=0, columnspan=2, sticky=tk.W, pady=10)
         

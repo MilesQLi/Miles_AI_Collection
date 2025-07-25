@@ -93,7 +93,7 @@ def formatting_prompts_func(examples, tokenizer, max_seq_length):
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Fine-tune a language model using SFT')
-    parser.add_argument('--config', type=str, default='default_config.yaml', help='Path to the configuration YAML file')
+    parser.add_argument('--config', type=str, default='default_train_config.yaml', help='Path to the configuration YAML file')
     args = parser.parse_args()
     
     # Load configuration
@@ -117,6 +117,10 @@ def main():
     )
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     
+    # Set pad token if not already set
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    
     # Load dataset configuration
     dataset_config = config['dataset']
     dataset_name = dataset_config['name']
@@ -139,30 +143,37 @@ def main():
     # Extract training configuration
     training_config = config['training']
     
-    # Create training arguments
+    # Create training arguments - FIXED: Added gradient clipping and mixed precision fixes
     training_args = TrainingArguments(
         gradient_accumulation_steps=training_config['gradient_accumulation_steps'],
         per_device_train_batch_size=training_config['per_device_train_batch_size'],
         warmup_steps=training_config['warmup_steps'],
         max_steps=training_config['max_steps'],
         learning_rate=training_config['learning_rate'],
-        fp16=training_config['fp16'],
         logging_steps=training_config['logging_steps'],
         weight_decay=training_config['weight_decay'],
         lr_scheduler_type=training_config['lr_scheduler_type'],
         seed=training_config['seed'],
         output_dir=training_config['output_dir'],
         report_to=training_config['report_to'],
+        # Fix for FP16 gradient unscaling issues
+        max_grad_norm=1.0,
+        dataloader_pin_memory=False,
+        # Alternative: disable fp16 if issues persist
+        # fp16=False,
+        # bf16=True if torch.cuda.is_bf16_supported() else False,
     )
     
-    # Create trainer
+    # Create trainer - FIXED: Use processing_class instead of tokenizer
     trainer = SFTTrainer(
         model=model,
-        tokenizer=tokenizer,
         train_dataset=dataset,
         data_collator=DataCollatorForSeq2Seq(tokenizer, model=model, padding=True),
         args=training_args,
     )
+    
+    # Set the processing_class (new way to set tokenizer)
+    trainer.processing_class = tokenizer
     
     # Train the model
     trainer_stats = trainer.train()
