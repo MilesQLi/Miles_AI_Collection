@@ -1,0 +1,29 @@
+# Model Configuration
+model:
+  name_or_path: '/workspace/text-generation-webui/models/Qwen_Qwen2.5-0.5B-Instruct'
+  pad_token_id: null  # Will be set to eos_token_id if None
+
+# Dataset Configuration
+dataset:
+  name: nthngdy/oscar-mini
+  subset: unshuffled_deduplicated_en
+  split: train
+  max_samples: 2000
+  seq_len: 128
+  trust_remote_code: true
+
+# Training Configuration
+training:
+  epochs: 1
+  seed: 3407
+  batch_size_per_device: 1
+  grad_accum_steps: 1
+  learning_rate: 2.0e-4
+  warmup_steps: 5
+  log_interval: 1
+  weight_decay: 0.01
+  lr_scheduler_type: cosine
+
+# Output Configuration
+output:
+  dir: outputs 
