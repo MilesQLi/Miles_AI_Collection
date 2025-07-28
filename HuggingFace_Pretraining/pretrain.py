@@ -4,12 +4,14 @@ from transformers import (
     DataCollatorForLanguageModeling, 
     AutoTokenizer, 
     AutoModelForCausalLM,
-    Trainer
+    Trainer,
+    TrainerCallback
 )
 import torch
 import yaml
 import argparse
 import os
+import json
 
 def load_config(config_path):
     """Load configuration from YAML file."""
@@ -61,10 +63,12 @@ def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Pretrain a language model')
     parser.add_argument('--config', type=str, default='default_config.yaml', help='Path to the configuration YAML file')
+    parser.add_argument('--text_completion_file', type=str, default=None, help='Path to a file with text for completion (one per line)')
     args = parser.parse_args()
     
     # Load configuration
     config = load_config(args.config)
+    text_completion_file = args.text_completion_file
     
     # Ensure numeric values are properly typed
     config = ensure_numeric_types(config)
@@ -115,6 +119,17 @@ def main():
     
     # Extract training configuration
     training_config = config['training']
+    gen_output_dir = os.path.join(config['output']['dir'], 'gen_results')
+    gen_every_n_steps = training_config.get('gen_every_n_steps', 20)
+    if text_completion_file:
+        f = open(text_completion_file, 'r')
+        gen_texts = f.readlines()
+        f.close()
+        gen_texts = [q.strip() for q in gen_texts]
+    else:
+        gen_texts = None
+    if gen_texts:
+        os.makedirs(gen_output_dir, exist_ok=True)
     
     # Create training arguments - FIXED: Added gradient clipping and mixed precision fixes
     training_args = TrainingArguments(
@@ -153,7 +168,41 @@ def main():
     
     # Set the processing_class (new way to set tokenizer)
     trainer.processing_class = tokenizer
+
+    class GenerationCallback(TrainerCallback):
+        def __init__(self, texts, tokenizer, output_dir, every_n_steps):
+            self.texts = texts
+            self.tokenizer = tokenizer
+            self.output_dir = output_dir
+            self.every_n_steps = every_n_steps
+        def on_step_end(self, args, state, control, **kwargs):
+            if self.texts and state.global_step % self.every_n_steps == 0 and state.global_step > 0:
+                model = kwargs['model']
+                model.eval()
+                generations = []
+                for text in self.texts:
+                    model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
+                    generated_ids = model.generate(
+                        **model_inputs,
+                        max_new_tokens=256
+                    )
+                    generated_ids = [
+                        output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
+                    ]
+                    response = tokenizer.batch_decode(generated_ids, skip_special_tokens=False)[0]
+                    generations.append({"input": text, "output": response})
+                out_path = os.path.join(self.output_dir, f"gen_step_{state.global_step}.json")
+                with open(out_path, 'w', encoding='utf-8') as f:
+                    json.dump(generations, f, ensure_ascii=False, indent=2)
+                print(f"[GenerationCallback] Saved generation results to {out_path}")
     
+    if gen_texts:
+        trainer.add_callback(GenerationCallback(
+            texts=gen_texts,
+            tokenizer=tokenizer,
+            output_dir=gen_output_dir,
+            every_n_steps=gen_every_n_steps
+        ))
     # Train the model
     trainer_stats = trainer.train()
     
