@@ -7,6 +7,7 @@ import argparse
 import os
 from transformers import TrainerCallback
 import json
+from peft import LoraConfig, get_peft_model, TaskType
 
 def load_config(config_path):
     """Load configuration from YAML file."""
@@ -123,6 +124,28 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     
+    # Apply LoRA if enabled in config
+    use_lora = model_config.get('use_lora', False)
+    if use_lora:
+        lora_config = model_config.get('lora_config', {})
+        
+        # Create LoRA configuration
+        peft_config = LoraConfig(
+            r=lora_config.get('r', 16),
+            lora_alpha=lora_config.get('lora_alpha', 32),
+            target_modules=lora_config.get('target_modules', ["q_proj", "v_proj"]),
+            lora_dropout=lora_config.get('lora_dropout', 0.1),
+            bias=lora_config.get('bias', "none"),
+            task_type=TaskType.CAUSAL_LM,
+        )
+        
+        # Apply LoRA to the model
+        model = get_peft_model(model, peft_config)
+        model.print_trainable_parameters()
+        print("LoRA applied successfully!")
+    else:
+        print("Training without LoRA (full fine-tuning)")
+    
     # Load dataset configuration
     dataset_config = config['dataset']
     dataset_name = dataset_config['name']
@@ -206,20 +229,6 @@ def main():
                 model.eval()
                 generations = []
                 for q in self.questions:
-                    #input_ids = self.tokenizer.apply_chat_template([
-                    #    {"role": "user", "content": q}
-                    #], tokenize=True, return_tensors="pt")
-                    #input_ids = input_ids.to(model.device)
-                    #with torch.no_grad():
-                    #    output = model.generate(
-                    #        input_ids=input_ids,
-                    #        max_new_tokens=128,
-                    #        do_sample=False,
-                    #        pad_token_id=self.tokenizer.pad_token_id,
-                    #        eos_token_id=self.tokenizer.eos_token_id
-                    #    )
-                    #decoded = self.tokenizer.decode(output[0], skip_special_tokens=True)
-                    #generations.append({"question": q, "output": decoded})
                     messages = [
                         {"role": "user", "content": q}
                     ]
@@ -260,7 +269,25 @@ def main():
     trainer_stats = trainer.train()
     
     # Save the model
-    trainer.save_model(training_config['output_dir'])
+    if use_lora:
+        # Create subfolder for LoRA weights
+        lora_output_dir = os.path.join(training_config['output_dir'], 'lora_weights')
+        os.makedirs(lora_output_dir, exist_ok=True)
+        
+        # Save LoRA weights in subfolder
+        model.save_pretrained(lora_output_dir)
+        print(f"LoRA weights saved to {lora_output_dir}")
+        
+        # Merge LoRA weights with base model and save complete model
+        print("Merging LoRA weights with base model...")
+        merged_model = model.merge_and_unload()
+        
+        # Save the complete merged model in main output directory
+        merged_model.save_pretrained(training_config['output_dir'])
+        print(f"Complete merged model saved to {training_config['output_dir']}")
+    else:
+        # For full fine-tuning, use the trainer's save method
+        trainer.save_model(training_config['output_dir'])
 
 if __name__ == "__main__":
     main()
