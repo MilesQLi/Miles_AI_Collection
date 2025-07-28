@@ -1,4 +1,4 @@
-from datasets import load_dataset
+from datasets import load_dataset,load_from_disk
 from transformers import (
     TrainingArguments, 
     DataCollatorForLanguageModeling, 
@@ -92,11 +92,15 @@ def main():
     dataset_split = dataset_config['split']
     max_samples = dataset_config.get('max_samples', None)
     
-    # Load and prepare the dataset
-    if dataset_subset:
-        dataset = load_dataset(dataset_name, dataset_subset, split=dataset_split)
+    if not dataset_config['local']:
+        # Load and prepare the dataset
+        if dataset_subset:
+            dataset = load_dataset(dataset_name, dataset_subset, split=dataset_split)
+        else:
+            dataset = load_dataset(dataset_name, split=dataset_split)
     else:
-        dataset = load_dataset(dataset_name, split=dataset_split)
+        ds = load_from_disk('processed_dataset')
+        dataset = ds['train']
     
     # Limit dataset size if specified
     if max_samples:

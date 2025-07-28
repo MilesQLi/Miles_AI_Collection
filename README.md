@@ -56,7 +56,7 @@ A comprehensive and configurable script for pretraining language models using th
 
 Example usage:
 ```bash
-accelerate launch --config_file ./default_config.yaml pretrain.py --config default_pretrain_config.yaml
+accelerate launch pretrain.py --config default_pretrain_config.yaml
 ```
 
 ### 7. HuggingFace SFT Training Script (HuggingFace_SFT/)

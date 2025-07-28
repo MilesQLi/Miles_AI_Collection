@@ -38,9 +38,9 @@ def ensure_numeric_types(config):
     
     return config
 
-def formatting_prompts_func(examples, tokenizer, max_seq_length):
+def formatting_prompts_func(examples, tokenizer, max_seq_length, question_column, answer_column):
     # Format the input prompt using apply_chat_template
-    input_messages = [{"role": "user", "content": examples['question']}]
+    input_messages = [{"role": "user", "content": examples[question_column]}]
     input_text = tokenizer.apply_chat_template(
         input_messages,
         tokenize=False,
@@ -49,8 +49,8 @@ def formatting_prompts_func(examples, tokenizer, max_seq_length):
     
     # Format the full conversation using apply_chat_template
     full_messages = [
-        {"role": "user", "content": examples['question']},
-        {"role": "assistant", "content": examples['answer']}
+        {"role": "user", "content": examples[question_column]},
+        {"role": "assistant", "content": examples[answer_column]}
     ]
     full_text = tokenizer.apply_chat_template(
         full_messages,
@@ -106,14 +106,10 @@ def main():
     model_config = config['model']
     model_path = model_config['path']
     max_seq_length = model_config['max_seq_length']
-    dtype = model_config['dtype']
-    load_in_4bit = model_config['load_in_4bit']
     
     # Load model and tokenizer
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
-        load_in_4bit=load_in_4bit,
-        torch_dtype=dtype if dtype else torch.float16
     )
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     
@@ -126,6 +122,8 @@ def main():
     dataset_name = dataset_config['name']
     dataset_subset = dataset_config.get('subset', None)
     dataset_split = dataset_config['split']
+    question_column = dataset_config.get('question_column', 'question')
+    answer_column = dataset_config.get('answer_column', 'answer')
     
     # Load and prepare the dataset
     if dataset_subset:
@@ -135,9 +133,9 @@ def main():
     
     # Apply formatting function with the tokenizer and max_seq_length
     dataset = dataset.map(
-        lambda x: formatting_prompts_func(x, tokenizer, max_seq_length), 
+        lambda x: formatting_prompts_func(x, tokenizer, max_seq_length, question_column, answer_column), 
         batched=False, 
-        remove_columns=["question", "answer"]
+        remove_columns=[question_column, answer_column]
     )
     
     # Extract training configuration
@@ -154,6 +152,7 @@ def main():
         weight_decay=training_config['weight_decay'],
         lr_scheduler_type=training_config['lr_scheduler_type'],
         seed=training_config['seed'],
+        num_train_epochs=training_config['epochs'],
         output_dir=training_config['output_dir'],
         report_to=training_config['report_to'],
         # Fix for FP16 gradient unscaling issues
