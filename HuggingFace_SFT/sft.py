@@ -5,6 +5,8 @@ import torch
 import yaml
 import argparse
 import os
+from transformers import TrainerCallback
+import json
 
 def load_config(config_path):
     """Load configuration from YAML file."""
@@ -57,6 +59,7 @@ def formatting_prompts_func(examples, tokenizer, max_seq_length, question_column
         tokenize=False,
         add_generation_prompt=False
     )
+    #print("full_text",full_text)
     
     # Tokenize both texts
     input_tokenized = tokenizer(input_text, truncation=False, padding=False)
@@ -75,7 +78,7 @@ def formatting_prompts_func(examples, tokenizer, max_seq_length, question_column
     # Ensure all tensors have the same length
     input_ids = full_tokenized["input_ids"]
     attention_mask = full_tokenized["attention_mask"]
-    print("max_seq_length",max_seq_length,type(max_seq_length))
+    #print("max_seq_length",max_seq_length,type(max_seq_length))
     
     # Apply length constraints if needed
     if len(input_ids) > max_seq_length:
@@ -94,10 +97,13 @@ def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Fine-tune a language model using SFT')
     parser.add_argument('--config', type=str, default='default_train_config.yaml', help='Path to the configuration YAML file')
+    parser.add_argument('--gen_questions_file', type=str, default=None, help='Path to a file with generation questions (one per line)')
+    # Removed gen_every_n_steps and gen_output_dir from argparse
     args = parser.parse_args()
     
     # Load configuration
     config = load_config(args.config)
+    gen_questions_file = args.gen_questions_file
     
     # Ensure numeric values are properly typed
     config = ensure_numeric_types(config)
@@ -140,6 +146,19 @@ def main():
     
     # Extract training configuration
     training_config = config['training']
+    # Get gen_every_n_steps from config, default to 100 if not present
+    gen_every_n_steps = training_config.get('gen_every_n_steps', 20)
+    # Set gen_output_dir as a subfolder of output_dir
+    gen_output_dir = os.path.join(training_config['output_dir'], 'gen_results')
+    if gen_questions_file:
+        f = open(gen_questions_file, 'r')
+        gen_questions = f.readlines()
+        f.close()
+        gen_questions = [q.strip() for q in gen_questions]
+    else:
+        gen_questions = None
+    if gen_questions:
+        os.makedirs(gen_output_dir, exist_ok=True)
     
     # Create training arguments - FIXED: Added gradient clipping and mixed precision fixes
     training_args = TrainingArguments(
@@ -173,7 +192,70 @@ def main():
     
     # Set the processing_class (new way to set tokenizer)
     trainer.processing_class = tokenizer
-    
+
+    # Custom callback for generation
+    class GenerationCallback(TrainerCallback):
+        def __init__(self, questions, tokenizer, output_dir, every_n_steps):
+            self.questions = questions
+            self.tokenizer = tokenizer
+            self.output_dir = output_dir
+            self.every_n_steps = every_n_steps
+        def on_step_end(self, args, state, control, **kwargs):
+            if self.questions and state.global_step % self.every_n_steps == 0 and state.global_step > 0:
+                model = kwargs['model']
+                model.eval()
+                generations = []
+                for q in self.questions:
+                    #input_ids = self.tokenizer.apply_chat_template([
+                    #    {"role": "user", "content": q}
+                    #], tokenize=True, return_tensors="pt")
+                    #input_ids = input_ids.to(model.device)
+                    #with torch.no_grad():
+                    #    output = model.generate(
+                    #        input_ids=input_ids,
+                    #        max_new_tokens=128,
+                    #        do_sample=False,
+                    #        pad_token_id=self.tokenizer.pad_token_id,
+                    #        eos_token_id=self.tokenizer.eos_token_id
+                    #    )
+                    #decoded = self.tokenizer.decode(output[0], skip_special_tokens=True)
+                    #generations.append({"question": q, "output": decoded})
+                    messages = [
+                        {"role": "user", "content": q}
+                    ]
+
+                    text = tokenizer.apply_chat_template(
+                        messages,
+                        tokenize=False,
+                        add_generation_prompt=True
+                    )
+                    model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
+                    
+                    generated_ids = model.generate(
+                        **model_inputs,
+                        max_new_tokens=256
+                    )
+                    generated_ids = [
+                        output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
+                    ]
+                    
+                    response = tokenizer.batch_decode(generated_ids, skip_special_tokens=False)[0]
+                    generations.append({"question": q, "output": response})
+                # Save to file
+                out_path = os.path.join(self.output_dir, f"gen_step_{state.global_step}.json")
+                with open(out_path, 'w', encoding='utf-8') as f:
+                    json.dump(generations, f, ensure_ascii=False, indent=2)
+                print(f"[GenerationCallback] Saved generation results to {out_path}")
+
+    # Add callback if needed
+    if gen_questions:
+        trainer.add_callback(GenerationCallback(
+            questions=gen_questions,
+            tokenizer=tokenizer,
+            output_dir=gen_output_dir,
+            every_n_steps=gen_every_n_steps
+        ))
+
     # Train the model
     trainer_stats = trainer.train()
     
