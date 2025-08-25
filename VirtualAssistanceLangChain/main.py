@@ -39,9 +39,9 @@ USER_NAME = "Miles"  # Replace with your desired user name
 HOST_NAME = "Assistant"  # Replace with your desired assistant name
 
 # LLM Configuration
-LOCAL_API_BASE = "http://localhost:1234/v1"  # Standard Ollama API endpoint (e.g., LM Studio)
+LOCAL_API_BASE = "http://localhost:11434/v1"#"http://localhost:1234/v1"  # Standard Ollama API endpoint (e.g., LM Studio)
 OLLAMA_LOCAL_API_BASE = "http://localhost:11434/v1"  # Standard Ollama API endpoint (for embeddings if different)
-LOCAL_MODEL_NAME = "qwen2.5:14b-instruct-q6_K"  # CHANGE TO YOUR AVAILABLE OLLAMA MODEL
+LOCAL_MODEL_NAME = "gpt-oss:20b" #"qwen2.5:14b-instruct-q6_K"  # CHANGE TO YOUR AVAILABLE OLLAMA MODEL
 DUMMY_API_KEY = "ollama"  # Placeholder API key
 
 # Embedding Configuration
