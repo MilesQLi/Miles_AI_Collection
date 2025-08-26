@@ -15,7 +15,8 @@ The launcher provides an easy-to-use interface to browse and start any applicati
 
 ## Applications
 
-### 1. Virtual Customer Service Representative (VirtualCustomerServiceRepresentative/)
+### 1. [Virtual Customer Service Representative](https://github.com/MilesQLi/VirtualCustomerServiceRepresentative)
+
 
 Two-page web app (Admin and Chat) with a FastAPI backend using LangChain + LangGraph ReAct agent and FAISS vector store (Ollama embeddings) for retrieval augmented generation. See project README for setup and details. Source: [VirtualCustomerServiceRepresentative](https://github.com/MilesQLi/VirtualCustomerServiceRepresentative)
 
