@@ -78,7 +78,10 @@ class AppLauncher:
         """Populate the listbox with available applications"""
         # Dictionary to store app descriptions
         self.app_info = {
-            
+            "VirtualCustomerServiceRepresentative": {
+                "name": "Virtual Customer Service Representative (RAG)",
+                "description": "Two-page web app (Admin and Chat) with a FastAPI backend using LangChain + LangGraph ReAct agent and FAISS (Ollama embeddings) for retrieval augmented generation."
+            },
             "VirtualAssistanceLangChain": {
                 "name": "Virtual Assistant with LangChain",
                 "description": "An intelligent virtual assistant powered by LangChain that can help with various tasks through natural language interaction. Features include task management, information retrieval, and conversational capabilities."
