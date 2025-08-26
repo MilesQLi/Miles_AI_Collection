@@ -31,10 +31,10 @@ Open:
 - Admin: http://localhost:8000/admin
 - Chat: http://localhost:8000/
 
-![Admin Page](VirtualCustomerServiceRepresentative/assets/admin_page.png)
+![Admin Page](assets/VirtualCustomerServiceRepresentative/admin_page.png)
 
 
-![Chat Page](VirtualCustomerServiceRepresentative/assets/chat_page.png)
+![Chat Page](assets/VirtualCustomerServiceRepresentative/chat_page.png)
 
 ### 2. Virtual Assistant (VirtualAssistanceLangChain/)
 
