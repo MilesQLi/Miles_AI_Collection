@@ -288,6 +288,7 @@ def main():
     else:
         # For full fine-tuning, use the trainer's save method
         trainer.save_model(training_config['output_dir'])
+    tokenizer.save_pretrained(training_config['output_dir'])
 
 if __name__ == "__main__":
     main()
